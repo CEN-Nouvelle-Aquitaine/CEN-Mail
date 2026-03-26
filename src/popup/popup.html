@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Mail-CEN</title>
+  <style>
+    :root {
+      --bg:        #f4f7f4;
+      --surface:   #ffffff;
+      --border:    #c8ddc8;
+      --border-s:  #e8f0e8;
+      --primary:   #2d6a2d;
+      --primary-h: #235523;
+      --primary-l: #e8f5e9;
+      --accent:    #4caf50;
+      --orange:    #e07c3a;
+      --orange-l:  #fef3e8;
+      --success:   #2e7d32;
+      --success-l: #e8f5e9;
+      --error:     #c62828;
+      --error-l:   #ffebee;
+      --warning:   #e65100;
+      --warning-l: #fff3e0;
+      --text:      #1a2e1a;
+      --text-2:    #4a6741;
+      --text-3:    #8aaa87;
+      --radius:    8px;
+      --radius-sm: 5px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }
+
+    body {
+      width: 560px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ── Header CEN ── */
+    .hdr {
+      background: linear-gradient(135deg, #1a3d1a 0%, #2d6a2d 100%);
+      color: #fff;
+      padding: 11px 16px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .hdr-logo {
+      width: 36px; height: 36px; background: rgba(255,255,255,.12);
+      border-radius: 8px; display: flex; align-items: center;
+      justify-content: center; font-size: 20px; flex-shrink: 0;
+    }
+    .hdr-title { font-size: 16px; font-weight: 700; letter-spacing: .3px; }
+    .hdr-sub   { font-size: 10.5px; opacity: .7; margin-top: 1px; }
+    .hdr-badge {
+      margin-left: auto;
+      background: rgba(255,255,255,.15);
+      border-radius: 99px; padding: 2px 9px;
+      font-size: 10px; font-family: monospace; opacity: .8;
+    }
+
+    /* ── Onglets ── */
+    .tabs {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 2px solid var(--border);
+    }
+    .tab {
+      flex: 1; padding: 8px 4px 7px;
+      text-align: center; cursor: pointer;
+      font-size: 10.5px; font-weight: 500;
+      color: var(--text-3);
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: color .15s, border-color .15s;
+      user-select: none; line-height: 1.3;
+    }
+    .tab:hover { color: var(--primary); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab-ico { display: block; font-size: 16px; margin-bottom: 2px; }
+
+    /* ── Panneaux ── */
+    .panel { display: none; padding: 14px 14px 16px; }
+    .panel.active { display: block; }
+
+    /* ── Éléments communs ── */
+    .sect {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .8px; color: var(--text-3); margin-bottom: 8px;
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 8px 13px; border: none; border-radius: var(--radius);
+      font-size: 12.5px; font-weight: 500;
+      cursor: pointer; transition: background .12s, transform .1s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-h); }
+    .btn-orange  { background: var(--orange); color: #fff; }
+    .btn-orange:hover:not(:disabled)  { background: #c96b2f; }
+    .btn-ghost { background: var(--border-s); color: var(--text-2); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .btn-danger { background: var(--error-l); color: var(--error); }
+    .btn-danger:hover:not(:disabled) { background: #ffc9c9; }
+    .btn-sm   { padding: 5px 10px; font-size: 12px; }
+    .btn-full { width: 100%; justify-content: center; }
+
+    select, input[type="text"], input[type="email"] {
+      width: 100%; padding: 7px 10px;
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface); font-size: 12.5px; color: var(--text);
+      outline: none; transition: border-color .15s;
+    }
+    select:focus, input[type="text"]:focus, input[type="email"]:focus {
+      border-color: var(--accent);
+    }
+    input[type="color"] {
+      width: 36px; height: 30px; padding: 2px 3px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      cursor: pointer; background: var(--surface);
+    }
+    .form-label {
+      display: block; font-size: 11.5px; font-weight: 500;
+      color: var(--text-2); margin-bottom: 4px;
+    }
+    .form-row { margin-bottom: 11px; }
+
+    /* ── Progression ── */
+    .prog { display: none; margin-top: 11px; }
+    .prog.show { display: block; }
+    .prog-track { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; }
+    .prog-fill  {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
+      border-radius: 99px; transition: width .3s ease;
+    }
+    .prog-info  {
+      display: flex; justify-content: space-between;
+      margin-top: 5px; font-size: 11px; color: var(--text-3);
+    }
+
+    /* ── Statuts ── */
+    .status {
+      display: none; margin-top: 10px; padding: 8px 11px;
+      border-radius: var(--radius); font-size: 12px; line-height: 1.4;
+    }
+    .status.show    { display: block; }
+    .status.info    { background: var(--primary-l); color: #1b4d1b; border-left: 3px solid var(--accent); }
+    .status.success { background: var(--success-l); color: #1b4d1b; border-left: 3px solid var(--success); }
+    .status.error   { background: var(--error-l);   color: #7f1919; border-left: 3px solid var(--error); }
+    .status.warning { background: var(--warning-l); color: #7f3300; border-left: 3px solid var(--warning); }
+    .status.orange  { background: var(--orange-l);  color: #7f3a00; border-left: 3px solid var(--orange); }
+
+    /* ── Spinner ── */
+    .spin {
+      display: inline-block; width: 11px; height: 11px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; animation: rot .55s linear infinite;
+    }
+    @keyframes rot { to { transform: rotate(360deg); } }
+
+    hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px;
+    }
+
+    /* ── Étiquettes mapping ── */
+    .lbl-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: var(--radius-sm);
+      transition: background .12s;
+    }
+    .lbl-item:hover { background: var(--bg); }
+    .lbl-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink:0;
+                  border: 1px solid rgba(0,0,0,.1); }
+    .lbl-name   { flex:1; font-size: 13px; font-weight: 500; }
+    .lbl-arrow  { color: var(--text-3); font-size: 12px; }
+    .ol-color-select {
+      padding: 4px 7px; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 12px;
+      background: var(--surface); color: var(--text); cursor: pointer;
+      min-width: 155px;
+    }
+
+    /* ── Dossiers migration ── */
+    .mig-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .radio-grp { display: flex; gap: 12px; }
+    .radio-lbl { display: flex; align-items: center; gap: 4px;
+                 cursor: pointer; font-size: 12.5px; }
+    .err-log {
+      display: none; margin-top: 8px; max-height: 80px; overflow-y: auto;
+      font-size: 11px; line-height: 1.5; color: var(--error);
+      background: var(--error-l); padding: 8px 10px;
+      border-radius: var(--radius-sm);
+    }
+    .err-log.show { display: block; }
+
+    /* ── Tags ── */
+    .tag-list { max-height: 200px; overflow-y: auto; }
+    .tag-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: var(--radius-sm); transition: background .12s;
+    }
+    .tag-item:hover { background: var(--bg); }
+    .tag-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink:0;
+                  border: 1px solid rgba(0,0,0,.1); }
+    .tag-name { flex:1; font-size: 13px; font-weight: 500; }
+    .tag-key  { font-size: 10px; color: var(--text-3); font-family: monospace; }
+    .tag-acts { display: flex; gap: 3px; opacity:0; transition: opacity .12s; }
+    .tag-item:hover .tag-acts { opacity:1; }
+    .inline-form {
+      display: none; background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 11px; margin-top: 10px;
+    }
+    .inline-form.show { display: block; }
+    .irow { display: flex; gap: 7px; align-items: center; margin-top: 8px; }
+
+    /* ── Export ── */
+    .exp-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: var(--radius-sm);
+      transition: background .12s;
+    }
+    .exp-item:hover { background: var(--bg); }
+    .exp-icon { font-size: 18px; flex-shrink:0; }
+    .exp-name  { flex:1; font-size: 13px; font-weight: 500; }
+    .exp-count { font-size: 11px; color: var(--text-3); }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+
+    /* ── M365 table ── */
+    .param-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .param-table th {
+      text-align:left; padding: 4px 8px;
+      color: var(--text-3); font-weight:500; font-size:11px;
+      border-bottom: 1px solid var(--border);
+    }
+    .param-table td { padding: 6px 8px; }
+    .param-table tr:not(:last-child) td { border-bottom: 1px solid var(--border-s); }
+    .tag-proto { font-weight:700; }
+    .tag-imap  { color: var(--primary); }
+    .tag-smtp  { color: var(--orange); }
+    .mono      { font-family: monospace; font-size: 11.5px; }
+    .badge-oauth { background: var(--success-l); color: var(--success);
+                   padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight:600; }
+
+    /* ── Sync ── */
+    .sync-phase {
+      font-size: 11.5px; color: var(--text-2); margin-top: 6px;
+      padding: 6px 10px; background: var(--bg); border-radius: var(--radius-sm);
+    }
+    /* ── Sync résultats ── */
+    .sync-cat-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; transition: background .12s; cursor: pointer;
+    }
+    .sync-cat-item:hover { background: var(--bg); }
+    .sync-cat-item:not(:last-child) { border-bottom: 1px solid var(--border-s); }
+    .sync-cat-name  { flex:1; font-size: 13px; font-weight: 500; }
+    .sync-cat-count {
+      font-size: 12px; font-weight: 700; color: var(--primary);
+      background: var(--primary-l); padding: 2px 8px;
+      border-radius: 99px; min-width: 60px; text-align: center;
+    }
+    .sync-cat-arrow { font-size: 12px; color: var(--text-3); }
+    .sync-cat-target { font-size: 12px; color: var(--text-2); font-style: italic; }
+    .sync-sum-card {
+      flex:1; min-width: 100px; background: var(--bg);
+      border-radius: var(--radius); padding: 10px 12px; text-align: center;
+    }
+    .sync-sum-num  { font-size: 22px; font-weight: 700; color: var(--primary); }
+    .sync-sum-label { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+    /* ── Sync vue détaillée ── */
+    .sync-filters {
+      display: flex; gap: 6px; align-items: center;
+      margin-bottom: 8px;
+    }
+    .sync-sel-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 8px; background: var(--bg);
+      border-radius: var(--radius-sm); margin-bottom: 8px;
+    }
+    /* Accordéon catégorie */
+    .sync-acc-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 12px; cursor: pointer;
+      background: var(--surface); user-select: none;
+      border-bottom: 1px solid var(--border-s);
+      transition: background .12s;
+    }
+    .sync-acc-header:hover { background: var(--bg); }
+    .sync-acc-toggle { font-size: 10px; color: var(--text-3); transition: transform .2s; }
+    .sync-acc-toggle.open { transform: rotate(90deg); }
+    .sync-acc-name { flex:1; font-size: 13px; font-weight: 600; color: var(--primary); }
+    .sync-acc-cnt {
+      font-size: 11px; background: var(--primary-l);
+      color: var(--primary); padding: 2px 8px;
+      border-radius: 99px; font-weight: 700;
+    }
+    .sync-acc-sel { font-size: 11px; color: var(--text-3); }
+    /* Messages dans l'accordéon */
+    .sync-msg-list { display: none; }
+    .sync-msg-list.open { display: block; }
+    .sync-msg-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 7px 12px 7px 28px;
+      border-bottom: 1px solid var(--border-s);
+      transition: background .1s; cursor: pointer;
+    }
+    .sync-msg-item:hover { background: var(--bg); }
+    .sync-msg-item:last-child { border-bottom: none; }
+    .sync-msg-body { flex:1; min-width:0; }
+    .sync-msg-subject {
+      font-size: 12.5px; font-weight: 500;
+      white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; color: var(--text);
+    }
+    .sync-msg-meta {
+      font-size: 11px; color: var(--text-3); margin-top: 2px;
+      display: flex; gap: 8px;
+    }
+    .sync-msg-sender { max-width: 180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sync-msg-date   { flex-shrink:0; }
+    .sync-msg-status {
+      font-size: 10px; padding: 1px 6px; border-radius: 99px;
+      flex-shrink: 0; align-self: center;
+    }
+    .sync-msg-status.done { background: var(--success-l); color: var(--success); }
+    .sync-msg-status.todo { background: var(--primary-l); color: var(--primary); }
+    /* Sous-barre par catégorie */
+    .sync-acc-subbar {
+      display: flex; gap: 6px; align-items: center;
+      padding: 5px 12px 5px 28px;
+      background: var(--border-s); border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+
+    /* ── Modale confirmation ── */
+    .modal-overlay {
+      display: none; position: fixed; inset:0;
+      background: rgba(0,0,0,.45); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--surface); border-radius: 10px;
+      padding: 20px; width: 440px; max-width: 95%;
+      box-shadow: 0 8px 32px rgba(0,0,0,.25);
+    }
+    .modal-title {
+      font-size: 14px; font-weight: 700; color: var(--text);
+      margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+    }
+    .modal-body {
+      font-size: 12.5px; color: var(--text-2); line-height: 1.6;
+      margin-bottom: 16px;
+    }
+    .modal-body ul { padding-left: 18px; margin-top: 6px; }
+    .modal-body li { margin-bottom: 3px; }
+    .modal-body .highlight {
+      background: var(--primary-l); border-radius: 5px;
+      padding: 8px 11px; margin: 10px 0; font-size: 12px;
+      border-left: 3px solid var(--accent);
+    }
+    .modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="hdr-logo"><img src="data:image/png;base64,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" alt="CEN" style="width:28px;height:28px;border-radius:4px;"></div>
+  <div>
+    <div class="hdr-title">Mail-CEN</div>
+    <div class="hdr-sub">Conservatoire d'Espaces Naturels · Nouvelle-Aquitaine</div>
+  </div>
+  <span class="hdr-badge">v5.2</span>
+</div>
+
+<!-- ONGLETS -->
+<div class="tabs">
+  <div class="tab active" data-tab="graph">
+    <span class="tab-ico">🔗</span>Connexion M365
+  </div>
+  <div class="tab" data-tab="m365">
+    <span class="tab-ico">🏢</span>Connexion Outlook
+  </div>
+  <div class="tab" data-tab="migration">
+    <span class="tab-ico">📦</span>Migration Dossiers
+  </div>
+  <div class="tab" data-tab="labels">
+    <span class="tab-ico">🏷️</span>Correspondances
+  </div>
+  <div class="tab" data-tab="sync">
+    <span class="tab-ico">🔄</span>Étiquettes → Catégories
+  </div>
+  <div class="tab" data-tab="export">
+    <span class="tab-ico">📇</span>Export Contacts
+  </div>
+</div>
+
+<!-- ═══════ ONGLET 2 : CONNEXION OUTLOOK ═══════ -->
+<div class="panel" id="panel-m365">
+  <div class="form-row">
+    <label class="form-label">Adresse email Microsoft 365</label>
+    <div style="display:flex;gap:8px">
+      <input type="email" id="m365-email" placeholder="prenom.nom@organisation.fr" style="flex:1">
+      <button class="btn btn-primary" id="m365-probe">🔍 Vérifier</button>
+    </div>
+  </div>
+
+  <div class="form-row">
+    <label class="form-label">Nom du compte dans Thunderbird</label>
+    <input type="text" id="m365-account-name" value="Outlook" placeholder="Outlook" style="width:100%">
+  </div>
+
+  <div id="m365-result" style="display:none">
+    <div id="m365-tenant" class="card" style="margin-bottom:12px;display:flex;align-items:center;gap:10px">
+      <span id="m365-t-icon" style="font-size:24px">🏢</span>
+      <div style="flex:1">
+        <div id="m365-t-name" style="font-weight:600;font-size:13px"></div>
+        <div id="m365-t-sub"  style="font-size:11px;color:var(--text-2)"></div>
+      </div>
+      <span id="m365-t-badge" style="display:none;font-size:11px;
+        background:var(--success-l);color:var(--success);
+        padding:3px 9px;border-radius:99px;font-weight:600">✓ Configuré</span>
+    </div>
+
+    <div class="sect">Paramètres de connexion</div>
+    <div class="card" style="margin-bottom:12px;padding:0">
+      <table class="param-table">
+        <thead>
+          <tr>
+            <th></th><th>Serveur</th><th>Port</th><th>Sécurité</th><th>Auth</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="tag-proto tag-imap">📥 IMAP</span></td>
+            <td class="mono">outlook.office365.com</td>
+            <td style="text-align:center;font-weight:700">993</td>
+            <td style="text-align:center">SSL/TLS</td>
+            <td style="text-align:center"><span class="badge-oauth">OAuth2</span></td>
+          </tr>
+          <tr>
+            <td><span class="tag-proto tag-smtp">📤 SMTP</span></td>
+            <td class="mono">smtp.office365.com</td>
+            <td style="text-align:center;font-weight:700">587</td>
+            <td style="text-align:center">STARTTLS</td>
+            <td style="text-align:center"><span class="badge-oauth">OAuth2</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="m365-action">
+      <button class="btn btn-primary btn-full" id="m365-open-wizard" style="margin-bottom:8px">
+        🚀 Ouvrir l'assistant de configuration Thunderbird
+      </button>
+      <div style="font-size:11px;color:var(--text-3);text-align:center;line-height:1.5">
+        Thunderbird détecte automatiquement les serveurs M365.<br>
+        L'authentification se fait via la fenêtre Microsoft (OAuth2).
+      </div>
+    </div>
+
+    <div id="m365-waiting" style="display:none;margin-top:10px">
+      <div class="status show info" style="display:flex;align-items:center;gap:8px">
+        <span class="spin"></span>
+        <span>En attente de la configuration… (2 min max)</span>
+        <button class="btn btn-ghost btn-sm" id="m365-cancel-wait" style="margin-left:auto">✕</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-2);margin-top:8px;line-height:1.6;
+                  padding:8px;background:var(--bg);border-radius:var(--radius)">
+        <strong>Dans l'assistant :</strong><br>
+        1. Entrez votre email → <em>Continuer</em><br>
+        2. Thunderbird détecte outlook.office365.com automatiquement<br>
+        3. Fenêtre Microsoft → connectez-vous → autorisez Thunderbird<br>
+        4. Le compte apparaît ici ✓
+      </div>
+    </div>
+  </div>
+
+  <div class="status show info" id="m365-hint" style="font-size:11.5px">
+    💡 Entrez votre adresse email Microsoft 365 pour vérifier le domaine et obtenir les paramètres de connexion.
+  </div>
+  <div class="status" id="m365-status"></div>
+</div>
+
+<!-- ═══════ ONGLET 2 : ÉTIQUETTES ═══════ -->
+<div class="panel" id="panel-labels">
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div class="sect" style="margin:0">Mapping étiquettes → catégories Outlook</div>
+    <button class="btn btn-primary btn-sm" id="lbl-save">💾 Sauvegarder</button>
+  </div>
+
+  <div class="status show info" style="font-size:11.5px;margin-bottom:12px;line-height:1.6">
+    Pour chaque étiquette Thunderbird, saisissez le nom <strong>exact</strong> de la catégorie
+    Outlook correspondante.<br>
+    Ce nom doit correspondre exactement à ce que vous avez créé dans Outlook
+    (ex: <em>Catégorie rouge</em>, <em>Projets CEN</em>…).<br>
+    Laissez vide pour ne pas migrer l'étiquette.
+  </div>
+
+  <div class="card" style="padding:0;margin-bottom:10px">
+    <div id="lbl-list">
+      <div style="padding:18px;text-align:center;color:var(--text-3)">
+        <span class="spin"></span> Chargement des étiquettes…
+      </div>
+    </div>
+  </div>
+
+  <hr>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <button class="btn btn-orange btn-sm" id="lbl-auto-create" style="flex:none">
+      🔗 Créer automatiquement dans Outlook
+    </button>
+    <span style="font-size:11px;color:var(--text-3)">
+      Crée les catégories Outlook à partir des étiquettes TB via Graph et remplit le mapping.
+    </span>
+  </div>
+
+  <details style="font-size:11.5px;color:var(--text-2);margin-top:4px">
+    <summary style="color:var(--text-3);padding:4px 0">
+      ℹ️ Comment trouver le nom exact d'une catégorie Outlook ?
+    </summary>
+    <div style="margin-top:8px;padding:10px;background:var(--bg);border-radius:var(--radius);line-height:1.6">
+      Dans Outlook : clic droit sur un email → <em>Classer</em> →
+      <em>Toutes les catégories</em><br>
+      Le nom exact de chaque catégorie est affiché dans cette liste.<br><br>
+      <strong>Attention à la casse</strong> — Outlook fait la distinction entre
+      <em>Projets CEN</em> et <em>projets cen</em>.
+    </div>
+  </details>
+
+  <div class="status" id="lbl-status"></div>
+</div>
+
+<!-- ═══════ ONGLET 3 : MIGRATION ═══════ -->
+<div class="panel" id="panel-migration">
+  <div class="form-row">
+    <label class="form-label">📂 Dossier source (OVH / local)</label>
+    <select id="mig-src"><option value="">— Chargement… —</option></select>
+  </div>
+  <div class="form-row">
+    <label class="form-label">📁 Dossier destination (Outlook)</label>
+    <select id="mig-dst"><option value="">— Choisir —</option></select>
+  </div>
+
+  <div class="mig-row">
+    <div class="radio-grp">
+      <label class="radio-lbl">
+        <input type="radio" name="mig-mode" value="move" checked>
+        <strong>Déplacer</strong>
+      </label>
+      <label class="radio-lbl">
+        <input type="radio" name="mig-mode" value="copy">Copier
+      </label>
+    </div>
+    <div style="flex:1"></div>
+    <label class="radio-lbl" style="font-size:12px;gap:5px">
+      <input type="checkbox" id="mig-recursive" checked>
+      🗂 Sous-dossiers
+    </label>
+    <button class="btn btn-ghost btn-sm" id="mig-refresh" style="margin-left:8px">↻</button>
+  </div>
+
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-primary" id="mig-start" style="flex:1">▶ Démarrer la migration</button>
+    <button class="btn btn-danger btn-sm" id="mig-cancel" disabled>✕</button>
+  </div>
+
+  <div class="prog" id="mig-prog">
+    <div class="prog-track"><div class="prog-fill" id="mig-bar" style="width:0%"></div></div>
+    <div class="prog-info">
+      <span id="mig-count">0 / 0</span>
+      <span id="mig-pct">0 %</span>
+    </div>
+  </div>
+  <div class="status" id="mig-status"></div>
+  <div class="err-log" id="mig-errlog"></div>
+</div>
+
+<!-- ═══════ ONGLET 4 : SYNCHRONISATION ═══════ -->
+<div class="panel" id="panel-sync">
+
+  <!-- Étape 1 : sélection comptes -->
+  <div id="sync-step1">
+    <div class="status show info" style="font-size:11.5px;margin-bottom:12px;line-height:1.5">
+      Compare les étiquettes de votre boîte OVH avec les emails migrés dans Outlook,
+      et applique les catégories Outlook selon votre mapping.
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">📬 Boîte source (OVH)</label>
+      <select id="sync-src"><option value="">— Sélectionner un compte —</option></select>
+    </div>
+    <div class="form-row">
+      <label class="form-label">📭 Boîte destination (Outlook)</label>
+      <select id="sync-dst"><option value="">— Sélectionner un compte —</option></select>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="sync-analyse">
+      🔍 Analyser les deux boîtes
+    </button>
+  </div>
+
+  <!-- Étape 2 : scan en cours -->
+  <div id="sync-step2" style="display:none">
+    <div class="prog show">
+      <div class="prog-track"><div class="prog-fill" id="sync-bar" style="width:0%"></div></div>
+      <div class="prog-info">
+        <span id="sync-count">Initialisation…</span>
+        <span id="sync-pct"></span>
+      </div>
+    </div>
+    <div class="sync-phase" id="sync-phase">Préparation du scan…</div>
+  </div>
+
+  <!-- Étape 3 : état des lieux + sélection -->
+  <div id="sync-step3" style="display:none">
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="sect" style="margin:0">Résultat de l'analyse</div>
+      <button class="btn btn-ghost btn-sm" id="sync-reset">↩ Recommencer</button>
+    </div>
+
+    <!-- Résumé global -->
+    <div id="sync-summary" class="card" style="margin-bottom:10px;display:flex;gap:12px;flex-wrap:wrap"></div>
+
+    <!-- Barre de filtres -->
+    <div class="sync-filters">
+      <input type="text" id="sync-filter-text"
+        placeholder="🔍 Rechercher sujet, expéditeur…"
+        style="flex:2;min-width:0;padding:6px 10px;font-size:12px">
+      <input type="date" id="sync-filter-from" title="Depuis" style="flex:1;min-width:0;font-size:11.5px">
+      <input type="date" id="sync-filter-to"   title="Jusqu'au" style="flex:1;min-width:0;font-size:11.5px">
+      <button class="btn btn-ghost btn-sm" id="sync-filter-clear" title="Effacer les filtres">✕</button>
+    </div>
+
+    <!-- Barre de sélection globale -->
+    <div class="sync-sel-bar">
+      <span id="sync-sel-count" style="font-size:12px;color:var(--text-2)">0 sélectionné(s)</span>
+      <div style="display:flex;gap:6px;margin-left:auto">
+        <button class="btn btn-ghost btn-sm" id="sync-sel-all">Tout ☑</button>
+        <button class="btn btn-ghost btn-sm" id="sync-sel-none">Tout ☐</button>
+        <button class="btn btn-ghost btn-sm" id="sync-sel-invert">Inverser</button>
+        <select id="sync-sort" style="padding:4px 7px;font-size:11.5px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)">
+          <option value="date-desc">Date ↓</option>
+          <option value="date-asc">Date ↑</option>
+          <option value="subject">Sujet A→Z</option>
+          <option value="sender">Expéditeur A→Z</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Liste accordéon par catégorie -->
+    <div class="card" style="padding:0;margin-bottom:10px">
+      <div id="sync-cat-list" style="max-height:340px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Messages sans mapping -->
+    <div id="sync-unmapped" style="display:none;margin-bottom:10px">
+      <div class="status show warning" style="font-size:11.5px;line-height:1.5" id="sync-unmapped-msg"></div>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" id="sync-apply" style="flex:1">
+        ✓ Appliquer via IMAP
+      </button>
+      <button class="btn btn-orange" id="sync-apply-graph" style="flex:1">
+        🔗 Appliquer via Graph
+      </button>
+    </div>
+  </div>
+
+  <!-- Étape 4 : application en cours -->
+  <div id="sync-step4" style="display:none">
+    <div class="prog show">
+      <div class="prog-track"><div class="prog-fill" id="sync-apply-bar" style="width:0%"></div></div>
+      <div class="prog-info">
+        <span id="sync-apply-count">Application en cours…</span>
+        <span id="sync-apply-pct"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="sync-status"></div>
+</div>
+
+<!-- ═══════ ONGLET 5 : EXPORT ═══════ -->
+<div class="panel" id="panel-export">
+
+  <!-- Contacts -->
+  <div class="sect">Contacts (carnets d'adresses)</div>
+  <div class="card" style="padding:0;margin-bottom:12px">
+    <div id="exp-books">
+      <div style="padding:14px;text-align:center;color:var(--text-3)">
+        <span class="spin"></span> Chargement…
+      </div>
+    </div>
+  </div>
+  <button class="btn btn-primary btn-full" id="exp-contacts-btn" style="margin-bottom:16px">
+    💾 Exporter les contacts sélectionnés (.vcf)
+  </button>
+
+  <!-- Calendriers -->
+  <div class="sect">Calendriers</div>
+  <div class="card" style="margin-bottom:12px">
+    <div id="exp-cals-auto" style="display:none">
+      <div id="exp-cal-list"></div>
+      <button class="btn btn-primary btn-full" id="exp-cals-btn" style="margin-top:10px">
+        💾 Exporter les calendriers sélectionnés (.ics)
+      </button>
+    </div>
+    <div id="exp-cals-guide">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:8px">📅 Export manuel</div>
+      <div style="font-size:12px;color:var(--text-2);line-height:1.7">
+        L'API Thunderbird ne permet pas l'export automatique des calendriers.<br>
+        <strong>Procédure :</strong><br>
+        1. Dans Thunderbird → menu <em>Événements et tâches</em> → <em>Exporter…</em><br>
+        2. Sélectionnez le calendrier → OK<br>
+        3. Choisissez format <em>iCalendar (.ics)</em> → Enregistrer<br>
+        4. Dans Outlook → Fichier → Ouvrir et exporter → Importer → Fichier .ics
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="exp-status"></div>
+</div>
+
+<!-- ═══════ ONGLET 6 : TAGS ═══════ -->
+<div class="panel" id="panel-tags">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div class="sect" style="margin:0">Étiquettes Thunderbird</div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-ghost btn-sm" id="tag-refresh">↻</button>
+      <button class="btn btn-primary btn-sm" id="tag-add-btn">+ Nouvelle étiquette</button>
+    </div>
+  </div>
+  <div class="card" style="padding:0">
+    <div class="tag-list" id="tag-list">
+      <div style="padding:18px;text-align:center;color:var(--text-3)">
+        <span class="spin"></span> Chargement…
+      </div>
+    </div>
+  </div>
+  <div class="inline-form" id="tag-form">
+    <div class="form-label" id="tag-form-title">Nouvelle étiquette</div>
+    <div class="irow">
+      <input type="text" id="tag-name" placeholder="Nom de l'étiquette" style="flex:1">
+      <input type="color" id="tag-color" value="#4caf50">
+      <button class="btn btn-primary btn-sm" id="tag-save">✓</button>
+      <button class="btn btn-ghost btn-sm" id="tag-cancel">✕</button>
+    </div>
+  </div>
+  <div class="status" id="tag-status"></div>
+</div>
+
+<!-- ═══════ MODALE DE CONFIRMATION ═══════ -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-title">
+      <span id="modal-icon">⚠️</span>
+      <span id="modal-title">Confirmer l'action</span>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="modal-cancel">✕ Annuler</button>
+      <button class="btn btn-primary" id="modal-confirm">✓ Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ ONGLET 1 : CONNEXION M365 ═══════ -->
+<div class="panel active" id="panel-graph">
+
+  <div class="sect" style="margin-bottom:10px">Connexion Microsoft Graph</div>
+
+  <div class="status show info" style="font-size:11.5px;margin-bottom:14px;line-height:1.6">
+    Connexion à votre compte Microsoft 365 pour appliquer les catégories
+    Outlook directement depuis Mail-CEN.
+  </div>
+
+  <!-- Statut authentification -->
+  <div id="graph-auth-status" class="card"
+       style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:14px">
+    <span id="graph-auth-icon" style="font-size:28px">🔒</span>
+    <div style="flex:1">
+      <div id="graph-auth-label" style="font-weight:600;font-size:13px">Non connecté</div>
+      <div id="graph-auth-sub" style="font-size:11px;color:var(--text-2);margin-top:2px">
+        Cliquez "Se connecter" pour vous authentifier avec votre compte Microsoft CEN.
+      </div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary btn-full" id="graph-auth" style="margin-bottom:8px">
+    🔑 Se connecter avec Microsoft
+  </button>
+
+  <!-- Boîte Device Code -->
+  <div id="graph-code-box" class="card" style="display:none;text-align:center;margin-bottom:10px;padding:16px">
+    <div style="font-size:11px;color:var(--text-2);margin-bottom:6px">
+      Entrez ce code sur microsoft.com/devicelogin :
+    </div>
+    <div id="graph-user-code" style="font-size:28px;font-weight:700;letter-spacing:4px;color:var(--primary);
+      background:var(--primary-l);padding:10px 18px;border-radius:var(--radius);display:inline-block;
+      cursor:pointer;user-select:all" title="Cliquez pour copier"></div>
+    <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
+      Cliquez sur le code pour le copier
+    </div>
+  </div>
+
+  <button class="btn btn-ghost btn-full" id="graph-disconnect"
+          style="display:none;margin-bottom:8px">
+    🔓 Se déconnecter
+  </button>
+
+  <details style="font-size:11.5px;color:var(--text-2);margin-top:8px">
+    <summary style="color:var(--text-3);padding:4px 0">ℹ️ Pourquoi cette connexion ?</summary>
+    <div style="margin-top:8px;padding:10px;background:var(--bg);border-radius:var(--radius);line-height:1.6">
+      Outlook Online gère ses catégories via l'API Microsoft Graph,
+      indépendamment d'IMAP. Cette connexion permet à Mail-CEN d'appliquer
+      vos catégories directement dans Outlook Online.<br><br>
+      <strong>Sécurité :</strong> aucun mot de passe n'est stocké dans le plugin.
+      La connexion utilise OAuth2 avec votre compte Microsoft CEN.
+    </div>
+  </details>
+
+  <div class="status" id="graph-status"></div>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
