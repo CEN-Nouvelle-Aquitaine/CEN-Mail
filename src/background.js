@@ -38,6 +38,35 @@ let _accountIdCache = {};
 // ─────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/**
+ * TB 128+ : messages.list() et messages.query() retournent un async iterator.
+ * Ce helper collecte tous les messages dans un tableau pour compatibilité.
+ */
+async function collectMessages(asyncList) {
+  const messages = [];
+  // TB 128+ async iterator
+  if (asyncList[Symbol.asyncIterator]) {
+    for await (const msg of asyncList) messages.push(msg);
+    return messages;
+  }
+  // Fallback ancien TB : objet paginé { id, messages }
+  let page = asyncList;
+  do {
+    messages.push(...page.messages);
+    page = page.id ? await messenger.messages.continueList(page.id) : null;
+  } while (page?.messages?.length);
+  return messages;
+}
+
+/** getRaw retourne un File/Blob depuis TB 128+ — on normalise en string */
+async function getRawString(messageId) {
+  const raw = await messenger.messages.getRaw(messageId);
+  if (typeof raw === "string") return raw;
+  // TB 128+ : File ou Blob → utiliser .text()
+  if (raw && typeof raw.text === "function") return await raw.text();
+  throw new Error("getRaw: format de retour inattendu");
+}
+
 function broadcast(msg) {
   messenger.runtime.sendMessage(msg).catch(() => {});
   if (["MIG_PROGRESS","MIG_DONE","MIG_ERROR","SYNC_PROGRESS","SYNC_DONE"].includes(msg.type))
@@ -62,12 +91,18 @@ function encodeHeader(name, value) {
 // DOSSIER TEMPORAIRE
 // ─────────────────────────────────────────────────────────────
 async function getTempFolder() {
-  const accounts = await messenger.accounts.list(false);
-  const local = accounts.find(a => a.type === "none");
-  if (!local) throw new Error("Aucun compte local trouvé.");
-  const subs = await messenger.folders.getSubFolders(local.rootFolder.id, false);
+  const accounts = await messenger.accounts.list();
+  // TB 128+ : type "none" = Dossiers locaux. Fallback sur "local" ou tout compte non-IMAP.
+  let local = accounts.find(a => a.type === "none")
+           ?? accounts.find(a => a.type === "local")
+           ?? accounts.find(a => a.type !== "imap" && a.type !== "pop3" && a.type !== "nntp");
+  // Dernier recours : utiliser le premier compte disponible
+  if (!local) local = accounts[0];
+  if (!local) throw new Error("Aucun compte configuré dans Thunderbird.");
+  const rootId = local.rootFolder?.id ?? local.rootFolder;
+  const subs = await messenger.folders.getSubFolders(rootId, false);
   let temp = subs.find(f => f.name === CFG.TEMP_FOLDER);
-  if (!temp) temp = await messenger.folders.create(local.rootFolder.id, CFG.TEMP_FOLDER);
+  if (!temp) temp = await messenger.folders.create(rootId, CFG.TEMP_FOLDER);
   return temp;
 }
 
@@ -82,7 +117,7 @@ async function buildFolderTree() {
 
   function walk(folders, depth, accId, accName, accType) {
     for (const f of folders) {
-      flat.push({ id: f.id, name: f.name, path: f.path, type: f.type,
+      flat.push({ id: f.id, name: f.name, path: f.path, type: f.specialUse ?? f.type,
                   accountId: accId, accountName: accName, accountType: accType, depth });
       _folderCache[f.id]    = f;
       _accountIdCache[f.id] = accId;
@@ -90,7 +125,7 @@ async function buildFolderTree() {
     }
   }
   for (const acc of accounts) {
-    const rootFolders = acc.folders ?? await messenger.folders.getSubFolders(acc.rootFolder.id, false);
+    const rootFolders = acc.folders ?? await messenger.folders.getSubFolders(acc.rootFolder.id, true);
     walk(rootFolders, 0, acc.id, acc.name, acc.type);
   }
   return flat;
@@ -153,7 +188,7 @@ async function applyTagsToSubject(message) {
   if (currentSubject.startsWith(prefix)) return null;
   const newSubject = prefix + currentSubject;
 
-  let raw = (await messenger.messages.getRaw(message.id))
+  let raw = (await getRawString(message.id))
     .replace(/\r/g,"").replace(/\n/g,"\r\n");
   const hdrEnd = raw.search(/\r\n\r\n/);
   if (hdrEnd === -1) throw new Error("Message malformé.");
@@ -195,18 +230,14 @@ async function applyTagsToSubject(message) {
   const moved = await new Promise((resolve, reject) => {
     let tries = 0;
     const poll = async () => {
-      const pg = await messenger.messages.query({
-        folderId: message.folder.id ?? message.folder, headerMessageId: localMsg.headerMessageId });
-      let page = pg;
-      do {
-        const found = page.messages.find(m => m.headerMessageId === localMsg.headerMessageId);
-        if (found) { resolve(found); return; }
-        page = page.id ? await messenger.messages.continueList(page.id) : null;
-      } while (page?.messages.length);
+      const msgs = await collectMessages(await messenger.messages.query({
+        folderId: message.folderId ?? message.folder?.id ?? message.folder, headerMessageId: localMsg.headerMessageId }));
+      const found = msgs.find(m => m.headerMessageId === localMsg.headerMessageId);
+      if (found) { resolve(found); return; }
       if (++tries > CFG.POLL_RETRIES) { reject(new Error("Message non retrouvé.")); return; }
       setTimeout(poll, CFG.POLL_INTERVAL);
     };
-    messenger.messages.move([localMsg.id], message.folder.id ?? message.folder);
+    messenger.messages.move([localMsg.id], message.folderId ?? message.folder?.id ?? message.folder);
     setTimeout(poll, CFG.POLL_INTERVAL);
   });
   await messenger.messages.move([message.id], temp.id ?? temp);
@@ -233,11 +264,8 @@ async function runSubjectTagAll() {
     for (const folder of folders) {
       if (folder.name === CFG.TEMP_FOLDER) continue;
       try {
-        let page = await messenger.messages.list(folder.id ?? folder);
-        do {
-          tagged.push(...page.messages.filter(m => m.tags?.length));
-          page = page.id ? await messenger.messages.continueList(page.id) : null;
-        } while (page);
+        const msgs = await collectMessages(await messenger.messages.list(folder.id ?? folder));
+        tagged.push(...msgs.filter(m => m.tags?.length));
       } catch {}
       if (folder.subFolders?.length) await scan(folder.subFolders);
     }
@@ -268,34 +296,29 @@ async function importViaLocalTemp(file, dstFolder, props) {
   return localMsg;
 }
 
-async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, mode, progress) {
+async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, mode, progress, force) {
   if (mig.cancel) return;
   const crossAccount = srcAccId !== dstAccId;
 
   // Index des Message-ID déjà présents dans la destination (anti-doublons)
   const dstMsgIds = new Set();
-  try {
-    let dstPage = await messenger.messages.list(dstFolder.id ?? dstFolder);
-    do {
-      for (const m of dstPage.messages) {
+  if (!force) {
+    try {
+      const dstMsgs = await collectMessages(await messenger.messages.list(dstFolder.id ?? dstFolder));
+      for (const m of dstMsgs) {
         if (m.headerMessageId) dstMsgIds.add(m.headerMessageId);
       }
-      dstPage = dstPage.id ? await messenger.messages.continueList(dstPage.id) : null;
-    } while (dstPage);
-  } catch {}
+    } catch {}
+  }
 
   let all = [];
   try {
-    let page = await messenger.messages.list(srcFolder.id ?? srcFolder);
-    do {
-      all.push(...page.messages);
-      page = page.id ? await messenger.messages.continueList(page.id) : null;
-    } while (page);
+    all = await collectMessages(await messenger.messages.list(srcFolder.id ?? srcFolder));
   } catch(e) { console.warn(`[Migration] Dossier ${srcFolder.name}:`, e); }
 
-  // Filtrer les doublons
+  // Filtrer les doublons (sauf si force)
   const before = all.length;
-  all = all.filter(m => !m.headerMessageId || !dstMsgIds.has(m.headerMessageId));
+  if (!force) all = all.filter(m => !m.headerMessageId || !dstMsgIds.has(m.headerMessageId));
   const skipped = before - all.length;
   if (skipped > 0) {
     progress.skipped = (progress.skipped || 0) + skipped;
@@ -326,7 +349,11 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
               : await messenger.messages.copy([m.id], dstId);
             progress.done++;
           } catch(e) {
-            progress.errors.push({ id: m.id, subject: m.subject, reason: e.message });
+            if (e.message?.includes("already contains")) {
+              progress.skipped = (progress.skipped || 0) + 1;
+            } else {
+              progress.errors.push({ id: m.id, subject: m.subject, reason: e.message });
+            }
           }
         }
       }
@@ -334,7 +361,7 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
       for (const m of batch) {
         if (mig.cancel) return;
         try {
-          const raw = await messenger.messages.getRaw(m.id);
+          const raw = await getRawString(m.id);
           const content = raw.replace(/\r/g,"").replace(/\n/g,"\r\n");
           const bytes = new Uint8Array(content.length);
           for (let k=0; k<content.length; k++) bytes[k] = content.charCodeAt(k) & 0xff;
@@ -343,16 +370,21 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
           await importViaLocalTemp(file, dstFolder, {
             flagged: m.flagged, read: m.read, tags: m.tags ?? [],
           });
-          if (mode === "move") await messenger.messages.delete([m.id], true);
+          if (mode === "move") await messenger.messages.delete([m.id], { skipTrash: true });
           progress.done++;
         } catch(e) {
-          progress.errors.push({ id: m.id, subject: m.subject, reason: e.message });
+          // TB 149 : "already contains a message with id" = doublon, pas une erreur
+          if (e.message?.includes("already contains")) {
+            progress.skipped = (progress.skipped || 0) + 1;
+          } else {
+            progress.errors.push({ id: m.id, subject: m.subject, reason: e.message });
+          }
         }
         if (progress.done % 5 === 0) await sleep(50);
       }
     }
 
-    broadcast({ type:"MIG_PROGRESS", done: progress.done, total: progress.total, errors: progress.errors });
+    broadcast({ type:"MIG_PROGRESS", done: progress.done, total: progress.total, skipped: progress.skipped || 0, errors: progress.errors });
     await sleep(CFG.BATCH_DELAY);
   }
 
@@ -366,11 +398,11 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
       progress.errors.push({ id:null, subject:`[Dossier] ${sub.name}`, reason: e.message });
       continue;
     }
-    await migrateFolderRecursive(sub, targetSub, srcAccId, dstAccId, mode, progress);
+    await migrateFolderRecursive(sub, targetSub, srcAccId, dstAccId, mode, progress, force);
   }
 }
 
-async function migrateFolderTree(sourceFolderId, destFolderId, mode="move") {
+async function migrateFolderTree(sourceFolderId, destFolderId, mode="move", force=false) {
   mig.running = true; mig.cancel = false;
   if (!_folderCache) await buildFolderTree();
   const srcFolder = _folderCache[sourceFolderId];
@@ -381,7 +413,7 @@ async function migrateFolderTree(sourceFolderId, destFolderId, mode="move") {
   const dstAccId = _accountIdCache[destFolderId];
   const progress = { done:0, total:0, skipped:0, errors:[] };
   broadcast({ type:"MIG_PROGRESS", done:0, total:0, skipped:0, errors:[] });
-  await migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, mode, progress);
+  await migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, mode, progress, force);
   mig.running = false;
   await messenger.storage.local.remove(CFG.MIG_STATE_KEY);
   return { done: progress.done, total: progress.total, skipped: progress.skipped,
@@ -412,19 +444,16 @@ async function analyseBoxes(srcAccountId, dstAccountId) {
   async function scanSrc(folders) {
     for (const folder of folders) {
       try {
-        let page = await messenger.messages.list(folder.id ?? folder);
-        do {
-          for (const m of page.messages) {
-            if (m.tags?.length && m.headerMessageId)
-              srcTagged.set(m.headerMessageId, {
-                tags   : m.tags,
-                subject: m.subject,
-                sender : m.author,
-                date   : m.date,
-              });
-          }
-          page = page.id ? await messenger.messages.continueList(page.id) : null;
-        } while (page);
+        const msgs = await collectMessages(await messenger.messages.list(folder.id ?? folder));
+        for (const m of msgs) {
+          if (m.tags?.length && m.headerMessageId)
+            srcTagged.set(m.headerMessageId, {
+              tags   : m.tags,
+              subject: m.subject,
+              sender : m.author,
+              date   : m.date,
+            });
+        }
       } catch {}
       if (folder.subFolders?.length) await scanSrc(folder.subFolders);
     }
@@ -441,14 +470,11 @@ async function analyseBoxes(srcAccountId, dstAccountId) {
   async function scanDst(folders) {
     for (const folder of folders) {
       try {
-        let page = await messenger.messages.list(folder.id ?? folder);
-        do {
-          for (const m of page.messages) {
-            if (m.headerMessageId)
-              dstIndex.set(m.headerMessageId, { id: m.id, tags: m.tags ?? [] });
-          }
-          page = page.id ? await messenger.messages.continueList(page.id) : null;
-        } while (page);
+        const msgs = await collectMessages(await messenger.messages.list(folder.id ?? folder));
+        for (const m of msgs) {
+          if (m.headerMessageId)
+            dstIndex.set(m.headerMessageId, { id: m.id, tags: m.tags ?? [] });
+        }
       } catch {}
       if (folder.subFolders?.length) await scanDst(folder.subFolders);
     }
@@ -596,7 +622,7 @@ async function applyCategories(selectedCategories) {
 // ─────────────────────────────────────────────────────────────
 async function listAddressBooks() {
   try {
-    const books = await messenger.addressBooks.list(true);
+    const books = await messenger.addressBooks.list();
     const result = [];
     for (const book of books) {
       // Ignorer les carnets collectés (bruit)
@@ -619,7 +645,7 @@ async function exportContactsVcf(bookIds) {
   let vcf = "";
   for (const bookId of bookIds) {
     try {
-      const book = await messenger.addressBooks.get(bookId, true);
+      const book = await messenger.addressBooks.get(bookId);
       for (const contact of (book.contacts ?? [])) {
         if (contact.vCard) vcf += contact.vCard.trim() + "\r\n\r\n";
       }
@@ -690,16 +716,11 @@ async function scanOutlookCategories(accountId) {
 
   async function scanFolder(folder) {
     try {
-      let page = await messenger.messages.list(folder.id ?? folder);
-      do {
-        for (const m of page.messages) {
-          // Passe 1 : tags TB
-          for (const tag of (m.tags ?? [])) addKey(tag);
-          // Garder pour échantillon passe 2
-          if (allMessages.length < 500) allMessages.push(m.id);
-        }
-        page = page.id ? await messenger.messages.continueList(page.id) : null;
-      } while (page);
+      const msgs = await collectMessages(await messenger.messages.list(folder.id ?? folder));
+      for (const m of msgs) {
+        for (const tag of (m.tags ?? [])) addKey(tag);
+        if (allMessages.length < 500) allMessages.push(m.id);
+      }
     } catch(e) {
       console.warn(`[Scan] Dossier ${folder.name}:`, e.message);
     }
@@ -1165,15 +1186,20 @@ async function waitForNewAccount(email, timeoutMs=120000) {
 // ─────────────────────────────────────────────────────────────
 // MENU CONTEXTUEL
 // ─────────────────────────────────────────────────────────────
-function createContextMenu() {
-  messenger.menus.remove("cen-subject-tag").catch(() => {});
-  messenger.menus.create({
-    id: "cen-subject-tag",
-    title: "🌿 Mail-CEN — Ajouter les tags au sujet {Tag}",
-    contexts: ["message_list"],
-  }, () => {
-    if (!messenger.runtime.lastError) messenger.menus.refresh().catch(() => {});
-  });
+async function createContextMenu() {
+  try {
+    await messenger.menus.remove("cen-subject-tag");
+  } catch {}
+  try {
+    await messenger.menus.create({
+      id: "cen-subject-tag",
+      title: "🌿 Mail-CEN — Ajouter les tags au sujet {Tag}",
+      contexts: ["message_list"],
+    });
+    await messenger.menus.refresh();
+  } catch(e) {
+    console.error("[Mail-CEN] Menu contextuel:", e.message);
+  }
 }
 messenger.runtime.onInstalled.addListener(createContextMenu);
 messenger.runtime.onStartup.addListener(createContextMenu);
@@ -1204,9 +1230,8 @@ messenger.runtime.onMessage.addListener(async (req) => {
       // ── M365
       case "probeM365":        return probeM365Domain(req.email);
       case "openAccountSetup":
-        // TB 140+ ne permet plus d'ouvrir about:accountsetup depuis une extension
-        // On retourne les instructions pour l'utilisateur
-        return { ok:true, manual: true };
+        // TB ne permet pas aux extensions d'ouvrir l'assistant de configuration
+        return { ok: true, manual: true };
       case "waitForNewAccount":
         waitForNewAccount(req.email, 120000).then(acc =>
           broadcast({ type:"M365_ACCOUNT_DETECTED", account:acc }));
@@ -1227,7 +1252,7 @@ messenger.runtime.onMessage.addListener(async (req) => {
         return buildFolderTree();
       case "startMigrationTree": {
         if (mig.running) return { error:"Une migration est déjà en cours." };
-        migrateFolderTree(req.source, req.dest, req.mode ?? "move")
+        migrateFolderTree(req.source, req.dest, req.mode ?? "move", !!req.force)
           .then(r  => broadcast({ type:"MIG_DONE", ...r }))
           .catch(e => { broadcast({ type:"MIG_ERROR", error:e.message }); mig.running=false; });
         return { started:true };

@@ -65,7 +65,7 @@ messenger.runtime.onMessage.addListener(msg => {
       break;
     case "MIG_DONE":    onMigDone(msg);        break;
     case "MIG_ERROR":   onMigError(msg.error); break;
-    case "M365_ACCOUNT_DETECTED": onM365Detected(msg.account); break;
+    case "M365_ACCOUNT_DETECTED": break; // page statique, pas de handler
 
     // Graph auth
     case "GRAPH_AUTH_OK":
@@ -141,115 +141,8 @@ messenger.runtime.onMessage.addListener(msg => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// ONGLET 1 : M365
+// ONGLET M365 — page statique, plus de JS nécessaire
 // ═══════════════════════════════════════════════════════════════
-const m365Email       = document.getElementById("m365-email");
-const m365Probe       = document.getElementById("m365-probe");
-const m365Result      = document.getElementById("m365-result");
-const m365Hint        = document.getElementById("m365-hint");
-const m365TIcon       = document.getElementById("m365-t-icon");
-const m365TName       = document.getElementById("m365-t-name");
-const m365TSub        = document.getElementById("m365-t-sub");
-const m365TBadge      = document.getElementById("m365-t-badge");
-const m365Action      = document.getElementById("m365-action");
-const m365Waiting     = document.getElementById("m365-waiting");
-const m365CancelWait  = document.getElementById("m365-cancel-wait");
-const m365Status      = document.getElementById("m365-status");
-
-let _m365Settings = null;
-
-m365Email.addEventListener("keydown", e => { if (e.key==="Enter") m365Probe.click(); });
-
-m365Probe.addEventListener("click", async () => {
-  const email = m365Email.value.trim();
-  if (!email || !email.includes("@")) {
-    setStatus(m365Status, "⚠️ Entrez une adresse email valide.", "warning");
-    return;
-  }
-  m365Probe.disabled = true;
-  m365Probe.innerHTML = '<span class="spin"></span>';
-  m365Hint.style.display = "none";
-  m365Result.style.display = "none";
-  hideStatus(m365Status);
-
-  try {
-    const s = await send({ action:"probeM365", email });
-    _m365Settings = s;
-
-    m365TIcon.textContent = s.isPersonal ? "👤" : "🏢";
-    m365TName.textContent = s.isPersonal
-      ? "Compte Microsoft personnel"
-      : `Microsoft 365 — ${s.domain}`;
-    m365TSub.textContent = s.isMicrosoft
-      ? "✓ Domaine Exchange/M365 vérifié"
-      : "Paramètres standard M365 utilisés";
-
-    if (s.alreadyConfigured) {
-      m365TBadge.style.display = "flex";
-      m365TBadge.textContent = `✓ ${s.existingAccountName}`;
-      m365Action.innerHTML = `<div class="status show info" style="text-align:center;margin-bottom:10px">
-        ℹ️ Cette adresse est déjà utilisée par le compte <strong>${esc(s.existingAccountName)}</strong>.<br>
-        Vous pouvez ajouter un second compte M365 avec la même adresse.
-      </div>
-      <button class="btn btn-primary btn-full" id="m365-open-wizard" style="margin-bottom:8px">
-        🚀 Ajouter quand même le compte Outlook
-      </button>`;
-      document.getElementById("m365-open-wizard")?.addEventListener("click", openM365Wizard);
-    } else {
-      m365TBadge.style.display = "none";
-      document.getElementById("m365-open-wizard")?.addEventListener("click", openM365Wizard);
-    }
-    m365Result.style.display = "block";
-  } catch(e) {
-    setStatus(m365Status, "❌ " + e.message, "error");
-    m365Hint.style.display = "block";
-  }
-  m365Probe.disabled = false;
-  m365Probe.innerHTML = "🔍 Vérifier";
-});
-
-async function openM365Wizard() {
-  const btn = document.getElementById("m365-open-wizard");
-  if (btn) btn.style.display = "none";
-
-  // Afficher les instructions pour ajouter le compte manuellement
-  m365Waiting.style.display = "block";
-  m365Waiting.innerHTML = `
-    <div class="status show info" style="line-height:1.7">
-      <strong>Ajoutez le compte depuis Thunderbird :</strong><br><br>
-      1. Cliquez sur le menu <strong>☰</strong> (trois barres) en haut a droite<br>
-      2. <strong>Parametres des comptes</strong><br>
-      3. En bas a gauche : <strong>Actions</strong> → <strong>Ajouter un compte de messagerie</strong><br>
-      4. Entrez votre email : <strong>${esc(_m365Settings?.email || '')}</strong><br>
-      5. Thunderbird detecte automatiquement les serveurs M365<br>
-      6. Connectez-vous via la fenetre Microsoft (OAuth2)<br><br>
-      <em style="font-size:11px;color:var(--text-3)">Une fois le compte ajoute, il apparaitra dans les onglets Migration et Synchro.</em>
-    </div>
-  `;
-
-  // Lancer la détection du nouveau compte en arrière-plan
-  try {
-    await send({ action:"waitForNewAccount", email: _m365Settings.email });
-  } catch(e) {}
-}
-
-m365CancelWait.addEventListener("click", () => {
-  m365Waiting.style.display = "none";
-  if (m365Action) m365Action.style.opacity = "1";
-});
-
-function onM365Detected(acc) {
-  m365Waiting.style.display = "none";
-  if (!acc) {
-    setStatus(m365Status, "⏱ Timeout — vérifiez dans Paramètres des comptes.", "warning");
-    return;
-  }
-  m365Action.innerHTML = `<div class="status show success" style="text-align:center">
-    🎉 Compte <strong>${esc(acc.name)}</strong> configuré avec succès !<br>
-    Disponible dans les onglets Migration et Synchro.
-  </div>`;
-  _foldersLoaded = false;
-}
 
 // ═══════════════════════════════════════════════════════════════
 // MODALE DE CONFIRMATION
@@ -558,7 +451,8 @@ migStart.addEventListener("click", async () => {
   setProgress(migBar, migCount, migPct, migProg, 0, 0);
   setStatus(migStatus, '<span class="spin"></span> Migration en cours…', "info");
 
-  const r = await send({ action:"startMigrationTree", source:src, dest:dst, mode });
+  const force = document.getElementById("mig-force").checked;
+  const r = await send({ action:"startMigrationTree", source:src, dest:dst, mode, force });
   if (r?.error) {
     setStatus(migStatus, "❌ " + r.error, "error");
     migStart.disabled = false; migCancel.disabled = true;

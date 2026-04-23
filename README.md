@@ -15,8 +15,9 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 
 ## Prérequis
 
-- Mozilla Thunderbird 115.0+
+- Mozilla Thunderbird 128.0+ (Manifest v3)
 - Compte Microsoft 365 (pour le module M365)
+- Windows 11 / Linux / macOS
 
 ## Installation
 
@@ -29,7 +30,7 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 
 | Composant | Technologie |
 |-----------|-------------|
-| Type | Extension Thunderbird (Manifest v2) |
+| Type | Extension Thunderbird (Manifest v3) |
 | Langage | JavaScript ES2020+ |
 | APIs | Thunderbird Messenger API, Microsoft Graph API |
 | Auth | OAuth2 (Azure / Entra ID) |
@@ -41,15 +42,15 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 ```
 CEN-Mail/
 ├── src/                        # Sources décompressées
-│   ├── manifest.json           # Métadonnées extension + permissions
-│   ├── background.html         # Page service worker
+│   ├── manifest.json           # Métadonnées extension + permissions (MV3)
 │   ├── background.js           # Logique principale (53 KB)
 │   │                           #   - Config (CFG)
 │   │                           #   - Migration batch avec checkpoints
 │   │                           #   - Synchro 4 phases
 │   │                           #   - Gestion dossiers/tags
+│   │                           #   - Microsoft Graph (OAuth2 + catégories)
 │   ├── popup/
-│   │   ├── popup.html          # Interface 6 onglets (39 KB)
+│   │   ├── popup.html          # Interface 7 onglets (39 KB)
 │   │   └── popup.js            # Logique UI (55 KB)
 │   ├── token-exchange.html     # Handler OAuth silencieux
 │   ├── token-exchange.js       # Échange de token Microsoft
@@ -73,11 +74,13 @@ TEMP_FOLDER   = "Mail-CEN-Temp"  // Dossier de staging
 ## Permissions requises
 
 - `storage` — Sauvegarde état/config locale
-- `messagesRead`, `messagesMove`, `messagesImport`, `messagesDelete`, `messagesTagsList`
-- `accountsRead`, `accountsFolders`
-- `addressBooks`
-- `notifications`, `menus`, `tabs`
-- Accès réseau : `login.microsoftonline.com`, `graph.microsoft.com`, `dns.google`
+- `identity` — OAuth2 (launchWebAuthFlow)
+- `messagesRead`, `messagesMove`, `messagesImport`, `messagesDelete` — Lecture, déplacement, import, suppression de messages
+- `messagesTags`, `messagesTagsList`, `messagesUpdate` — Gestion des étiquettes/tags
+- `accountsRead`, `accountsFolders` — Accès comptes et dossiers
+- `addressBooks` — Export des contacts
+- `notifications`, `menus`, `tabs` — UI (notifications, menu contextuel, onglets)
+- Accès réseau (host_permissions) : `login.microsoftonline.com`, `graph.microsoft.com`, `dns.google`
 
 ## Build
 
