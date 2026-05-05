@@ -24,7 +24,7 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 1. Ouvrir Thunderbird
 2. Menu **Outils → Modules complémentaires**
 3. Roue dentée → **Installer un module depuis un fichier**
-4. Sélectionner `mail-cen-v6.0.xpi`
+4. Sélectionner `mail-cen-v6.1.xpi`
 
 ## Stack technique
 
@@ -58,7 +58,7 @@ CEN-Mail/
 │       ├── icon-16.png
 │       ├── icon-32.png
 │       └── icon-64.png
-└── mail-cen-v6.0.xpi          # Extension compilée (prête à installer)
+└── mail-cen-v6.1.xpi          # Extension compilée (prête à installer)
 ```
 
 ## Configuration migration (v6.0)
@@ -100,10 +100,16 @@ Pour recompiler le XPI depuis les sources :
 
 ```bash
 cd src
-zip -r ../mail-cen-v6.0.xpi . -x ".*"
+zip -r ../mail-cen-v6.1.xpi . -x ".*"
 ```
 
 ## Changelog
+
+### v6.1.0 — Import IMAP direct (suppression du détour temp local)
+
+- **Stratégie 3 réécrite** : `messages.import()` direct vers le dossier IMAP destination (TB 128+ utilise APPEND, INTERNALDATE préservée)
+- Le dossier `Mail-CEN-Temp` n'est créé **que si l'import direct échoue** (rare)
+- Migration cross-account 2× plus rapide en cas nominal (un seul transfert IMAP au lieu de import-local + move-to-IMAP)
 
 ### v6.0.0 — Robustesse migration IMAP + conformité MV3 stricte
 

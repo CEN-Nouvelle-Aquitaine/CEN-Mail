@@ -1,9 +1,9 @@
 /**
- * Mail-CEN background.js v6.0
+ * Mail-CEN background.js v6.1
  * Modules : M365 · Étiquettes · Migration · Synchronisation · Export · Tags
  */
 "use strict";
-console.log("[Mail-CEN] Chargement v6.0");
+console.log("[Mail-CEN] Chargement v6.1");
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -170,7 +170,7 @@ async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
     }, "getRaw");
 
     await withRetry(async () => {
-      await importViaLocalTemp(file, dstFolder, {
+      await importToFolder(file, dstFolder, {
         flagged: m.flagged, read: m.read, tags: m.tags ?? [],
       });
     }, "import");
@@ -463,27 +463,45 @@ async function runSubjectTagAll() {
 // MODULE MIGRATION
 // ─────────────────────────────────────────────────────────────
 
-/** Import local temp → move vers IMAP (préserve la date via INTERNALDATE) */
-async function importViaLocalTemp(file, dstFolder, props) {
+/**
+ * Import d'un fichier .eml vers un dossier (IMAP ou local).
+ * TB 128+ supporte messages.import() directement vers IMAP via APPEND
+ * (préserve INTERNALDATE). On essaie d'abord direct, fallback temp local
+ * seulement si l'import direct échoue (certains serveurs/configurations
+ * rejettent l'APPEND IMAP).
+ */
+async function importToFolder(file, dstFolder, props) {
+  const dstId = dstFolder.id ?? dstFolder;
+
+  // Tentative 1 : import direct vers la destination (zéro détour)
+  try {
+    const msg = await messenger.messages.import(file, dstId, props);
+    if (msg) return msg;
+  } catch(e) {
+    if (classifyError(e) === "permanent") throw e; // doublon, quota → bubble up
+    console.warn(`[Migration] Import direct IMAP échoué, fallback temp local : ${e.message}`);
+  }
+
+  // Tentative 2 : fallback via Dossiers locaux (seulement si direct rejeté)
   const temp = await getTempFolder();
   const tempId = temp.id ?? temp;
-  const dstId  = dstFolder.id ?? dstFolder;
   const localMsg = await messenger.messages.import(file, tempId, props);
-  if (!localMsg) throw new Error("Import local échoué.");
-  // Le move local→IMAP peut échouer en transitoire, retry séparément
+  if (!localMsg) throw new Error("Import (temp local) échoué.");
   try {
     await messenger.messages.move([localMsg.id], dstId);
   } catch(e) {
-    // Si le move échoue, essayer copy puis delete (atomique différent)
     try {
       await messenger.messages.copy([localMsg.id], dstId);
       try { await messenger.messages.delete([localMsg.id], { deletePermanently: true }); } catch {}
     } catch {
-      throw e; // remonter l'erreur originale
+      throw e;
     }
   }
   return localMsg;
 }
+
+// Alias rétrocompatible
+const importViaLocalTemp = importToFolder;
 
 async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, mode, progress, force) {
   if (mig.cancel) return;
@@ -1512,4 +1530,4 @@ messenger.runtime.onMessage.addListener(async (req) => {
   }
 });
 
-console.log("[Mail-CEN] Prêt v6.0");
+console.log("[Mail-CEN] Prêt v6.1");
