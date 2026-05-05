@@ -1,9 +1,9 @@
 /**
- * Mail-CEN background.js v6.1
+ * Mail-CEN background.js v6.2
  * Modules : M365 · Étiquettes · Migration · Synchronisation · Export · Tags
  */
 "use strict";
-console.log("[Mail-CEN] Chargement v6.1");
+console.log("[Mail-CEN] Chargement v6.2");
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -309,10 +309,39 @@ async function buildFolderTree() {
 
 async function ensureFolder(parentFolder, name) {
   const pid = parentFolder.id ?? parentFolder;
-  const subs = await messenger.folders.getSubFolders(pid, false);
+  // 1. Lister les sous-dossiers existants
+  let subs;
+  try {
+    subs = await messenger.folders.getSubFolders(pid, false);
+  } catch(e) {
+    console.warn(`[Migration] getSubFolders pour parent ${pid} échoué : ${e.message}`);
+    subs = [];
+  }
   const ex = subs.find(f => f.name === name);
   if (ex) return ex;
-  return await messenger.folders.create(pid, name);
+
+  // 2. Créer avec retry (IMAP peut être lent/saturé)
+  let created;
+  try {
+    created = await withRetry(async () => {
+      return await messenger.folders.create(pid, name);
+    }, `create-folder-${name}`);
+  } catch(e) {
+    // Sur Outlook IMAP, parfois la création réussit mais l'API throw
+    // → re-lister pour vérifier si le dossier est apparu
+    console.warn(`[Migration] folders.create("${name}") a throw : ${e.message} — vérification…`);
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const subs2 = await messenger.folders.getSubFolders(pid, false);
+      const found = subs2.find(f => f.name === name);
+      if (found) {
+        console.log(`[Migration] Le dossier "${name}" existe en fait → ok`);
+        return found;
+      }
+    } catch {}
+    throw e;
+  }
+  return created;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -569,12 +598,28 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
   }
 
   // Récursion sous-dossiers
-  for (const sub of (srcFolder.subFolders ?? [])) {
+  // On re-fetch les sous-dossiers via l'API au lieu de se fier au cache,
+  // car certaines configurations IMAP (notamment Outlook) peuvent avoir
+  // des subFolders non chargés dans la première passe.
+  let subFolders = srcFolder.subFolders ?? [];
+  if (!subFolders.length) {
+    try {
+      subFolders = await messenger.folders.getSubFolders(srcFolder.id ?? srcFolder, false);
+    } catch {}
+  }
+
+  if (subFolders.length) {
+    console.log(`[Migration] ${srcFolder.name} : ${subFolders.length} sous-dossier(s) à traiter`);
+  }
+
+  for (const sub of subFolders) {
     if (mig.cancel) return;
     if (sub.name === CFG.TEMP_FOLDER) continue;
     let targetSub;
-    try { targetSub = await ensureFolder(dstFolder, sub.name); }
-    catch(e) {
+    try {
+      targetSub = await ensureFolder(dstFolder, sub.name);
+      console.log(`[Migration] Sous-dossier "${sub.name}" → ${targetSub?.id ? "OK" : "?"}`);
+    } catch(e) {
       progress.errors.push({ id:null, subject:`[Dossier] ${sub.name}`, reason: e.message });
       continue;
     }
@@ -1530,4 +1575,4 @@ messenger.runtime.onMessage.addListener(async (req) => {
   }
 });
 
-console.log("[Mail-CEN] Prêt v6.1");
+console.log("[Mail-CEN] Prêt v6.2");

@@ -1,5 +1,5 @@
 /**
- * Mail-CEN popup.js v6.1
+ * Mail-CEN popup.js v6.2
  */
 "use strict";
 

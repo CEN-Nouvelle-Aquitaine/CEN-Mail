@@ -24,7 +24,7 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 1. Ouvrir Thunderbird
 2. Menu **Outils → Modules complémentaires**
 3. Roue dentée → **Installer un module depuis un fichier**
-4. Sélectionner `mail-cen-v6.1.xpi`
+4. Sélectionner `mail-cen-v6.2.xpi`
 
 ## Stack technique
 
@@ -58,7 +58,7 @@ CEN-Mail/
 │       ├── icon-16.png
 │       ├── icon-32.png
 │       └── icon-64.png
-└── mail-cen-v6.1.xpi          # Extension compilée (prête à installer)
+└── mail-cen-v6.2.xpi          # Extension compilée (prête à installer)
 ```
 
 ## Configuration migration (v6.0)
@@ -100,10 +100,16 @@ Pour recompiler le XPI depuis les sources :
 
 ```bash
 cd src
-zip -r ../mail-cen-v6.1.xpi . -x ".*"
+zip -r ../mail-cen-v6.2.xpi . -x ".*"
 ```
 
 ## Changelog
+
+### v6.2.0 — Création des sous-dossiers robuste
+
+- **Récursion sous-dossiers** : re-fetch via `getSubFolders` si le cache est vide (certaines configurations IMAP ne peuplent pas `subFolders` à la 1re passe)
+- **`ensureFolder`** : retry exponentiel sur `folders.create()` + revérification post-erreur (Outlook peut throw alors que la création a réussi)
+- **Logs explicites** : nombre de sous-dossiers détectés + statut de création de chaque dossier dans la console
 
 ### v6.1.0 — Import IMAP direct (suppression du détour temp local)
 
