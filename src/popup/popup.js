@@ -1,5 +1,5 @@
 /**
- * Mail-CEN popup.js v6.2
+ * Mail-CEN popup.js v7.0
  */
 "use strict";
 
@@ -75,7 +75,6 @@ messenger.runtime.onMessage.addListener(msg => {
       break;
     case "MIG_DONE":    onMigDone(msg);        break;
     case "MIG_ERROR":   onMigError(msg.error); break;
-    case "M365_ACCOUNT_DETECTED": break; // page statique, pas de handler
 
     // Graph auth
     case "GRAPH_AUTH_OK":
@@ -412,9 +411,7 @@ async function loadFolders() {
   }
 }
 
-document.querySelector("[data-tab='migration']").addEventListener("click", () => {
-  if (!_foldersLoaded) loadFolders();
-});
+// (Le chargement loadFolders() est déjà branché via le switch tabs.forEach plus haut)
 
 migRefresh.addEventListener("click", () => {
   _foldersLoaded = false; loadFolders();
@@ -1221,8 +1218,10 @@ async function restoreState() {
   if (!state) return;
 
   // Trouver l'onglet concerné
-  const isMig  = ["MIG_PROGRESS","MIG_DONE","MIG_ERROR"].includes(state.type);
-  const isSync = ["SYNC_PROGRESS","SYNC_DONE","SYNC_ERROR"].includes(state.type);
+  const MIG_TYPES  = ["MIG_PROGRESS","MIG_DONE","MIG_ERROR"];
+  const SYNC_TYPES = ["SYNC_PROGRESS","SYNC_ANALYSE_DONE","SYNC_APPLY_PROGRESS","SYNC_APPLY_DONE","SYNC_ERROR","GRAPH_APPLY_PROGRESS","GRAPH_APPLY_DONE","GRAPH_ERROR"];
+  const isMig  = MIG_TYPES.includes(state.type);
+  const isSync = SYNC_TYPES.includes(state.type);
   const tabKey = isMig ? "migration" : isSync ? "sync" : null;
   if (!tabKey) return;
 
@@ -1245,10 +1244,23 @@ async function restoreState() {
     }
   } else if (isSync) {
     loadSyncAccounts();
-    if (state.type === "SYNC_DONE") {
-      onSyncDone(state); await send({ action:"clearMigState" });
-    } else if (state.type === "SYNC_ERROR") {
-      onSyncError(state.error); await send({ action:"clearMigState" });
+    if (state.type === "SYNC_APPLY_DONE" || state.type === "GRAPH_APPLY_DONE") {
+      // Restaurer l'affichage final
+      showSyncStep(3);
+      const skip = state.skipped ? ` · ${state.skipped} non trouvés` : "";
+      const errs = state.errors?.length ? ` · ${state.errors.length} erreur(s)` : "";
+      setStatus(syncStatus,
+        `✅ ${state.done || 0}/${state.total || 0} appliqués${skip}${errs}`,
+        state.errors?.length ? "warning" : "success");
+      await send({ action:"clearMigState" });
+    } else if (state.type === "SYNC_ANALYSE_DONE") {
+      _syncResult = state;
+      renderSyncResults(state);
+      showSyncStep(3);
+    } else if (state.type === "SYNC_ERROR" || state.type === "GRAPH_ERROR") {
+      setStatus(syncStatus, "❌ " + state.error, "error");
+      showSyncStep(1);
+      await send({ action:"clearMigState" });
     }
   }
 }

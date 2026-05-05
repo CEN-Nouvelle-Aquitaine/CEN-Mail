@@ -1,9 +1,9 @@
 /**
- * Mail-CEN background.js v6.2
+ * Mail-CEN background.js v7.0
  * Modules : M365 · Étiquettes · Migration · Synchronisation · Export · Tags
  */
 "use strict";
-console.log("[Mail-CEN] Chargement v6.2");
+console.log("[Mail-CEN] Chargement v7.0");
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -20,7 +20,6 @@ const CFG = {
   HEALTH_COOLDOWN : 30000,   // pause de récupération en mode dégradé (30s)
   HEALTH_DELAY_MULT: 3,      // multiplicateur des délais en mode dégradé
   TEMP_FOLDER     : "Mail-CEN-Temp",
-  CHECKPOINT_KEY  : "cen_checkpoint",
   MAPPING_KEY     : "cen_label_mapping",
   MIG_STATE_KEY   : "cen_mig_state",
 };
@@ -69,6 +68,18 @@ function noteSuccess() {
   health.consecutiveErrors = 0;
 }
 
+/** Sleep interruptible : checke mig.cancel toutes les 200ms */
+async function cancellableSleep(ms) {
+  const step = 200;
+  let elapsed = 0;
+  while (elapsed < ms) {
+    if (mig.cancel) return;
+    const wait = Math.min(step, ms - elapsed);
+    await new Promise(r => setTimeout(r, wait));
+    elapsed += wait;
+  }
+}
+
 async function noteError(e) {
   health.consecutiveErrors++;
   health.totalErrors++;
@@ -77,9 +88,8 @@ async function noteError(e) {
     health.degraded = true;
     console.warn(`[Migration] ⚠️ Cascade de ${health.consecutiveErrors} erreurs — mode dégradé activé (cooldown ${CFG.HEALTH_COOLDOWN}ms)`);
     broadcast({ type:"MIG_HEALTH", degraded: true, consecutive: health.consecutiveErrors });
-    await new Promise(r => setTimeout(r, CFG.HEALTH_COOLDOWN));
+    await cancellableSleep(CFG.HEALTH_COOLDOWN);
   }
-  // Sortir du mode dégradé après 10 succès consécutifs (géré dans noteSuccess via reset)
 }
 
 function getDelayMultiplier() {
@@ -90,6 +100,7 @@ function getDelayMultiplier() {
 async function withRetry(fn, label = "op") {
   let lastErr;
   for (let attempt = 1; attempt <= CFG.RETRY_MAX; attempt++) {
+    if (mig.cancel) throw new Error("Annulé par l'utilisateur");
     try {
       const r = await fn();
       if (attempt > 1) console.log(`[Migration] ${label} OK après ${attempt} essais`);
@@ -97,11 +108,12 @@ async function withRetry(fn, label = "op") {
     } catch(e) {
       lastErr = e;
       const cls = classifyError(e);
-      if (cls === "permanent") throw e; // pas de retry sur erreur permanente
+      if (cls === "permanent") throw e;
       if (attempt === CFG.RETRY_MAX) throw e;
       const delay = CFG.RETRY_BACKOFF * attempt * getDelayMultiplier();
       console.warn(`[Migration] ${label} échec ${cls} (essai ${attempt}/${CFG.RETRY_MAX}), retry dans ${delay}ms : ${e.message}`);
-      await new Promise(r => setTimeout(r, delay));
+      await cancellableSleep(delay);
+      if (mig.cancel) throw new Error("Annulé par l'utilisateur");
     }
   }
   throw lastErr;
@@ -138,16 +150,22 @@ async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
         await withRetry(async () => {
           await messenger.messages.copy([m.id], dstId);
         }, "copy+delete");
+        let srcDeleted = true;
         try {
           await withRetry(async () => {
             await messenger.messages.delete([m.id], { deletePermanently: true });
           }, "delete-after-copy");
         } catch(de) {
-          // Le copy a marché mais le delete a échoué — on tolère, c'est juste un doublon source
-          console.warn(`[Migration] delete src échoué après copy (toléré) : ${de.message}`);
+          // Le copy a marché mais le delete pas → message présent aux 2 endroits
+          srcDeleted = false;
+          console.warn(`[Migration] copy OK mais delete src échoué : "${m.subject?.substring(0,40)}" — ${de.message}`);
         }
         noteSuccess();
-        return { ok: true, method: "copy+delete" };
+        return {
+          ok: true,
+          method: srcDeleted ? "copy+delete" : "copy-only",
+          warning: srcDeleted ? null : "Message copié mais non supprimé de la source (doublon résiduel)",
+        };
       } catch(e) {
         if (classifyError(e) === "permanent" && e.message?.includes("already contains")) {
           return { skipped: true, reason: "doublon" };
@@ -175,17 +193,23 @@ async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
       });
     }, "import");
 
+    let srcDeleted = true;
     if (mode === "move") {
       try {
         await withRetry(async () => {
           await messenger.messages.delete([m.id], { deletePermanently: true });
         }, "delete-after-import");
       } catch(de) {
-        console.warn(`[Migration] delete src échoué après import (toléré) : ${de.message}`);
+        srcDeleted = false;
+        console.warn(`[Migration] import OK mais delete src échoué : "${m.subject?.substring(0,40)}" — ${de.message}`);
       }
     }
     noteSuccess();
-    return { ok: true, method: "import" };
+    return {
+      ok: true,
+      method: "import",
+      warning: (mode === "move" && !srcDeleted) ? "Message importé mais non supprimé de la source (doublon résiduel)" : null,
+    };
   } catch(e) {
     if (e.message?.includes("already contains")) {
       return { skipped: true, reason: "doublon" };
@@ -194,16 +218,6 @@ async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
     return { error: e.message };
   }
 }
-
-// Outlook catégories standard (clé IMAP → couleur hex)
-const OL_CATEGORIES = {
-  "Red Category"    : "#ef4444",
-  "Orange Category" : "#f97316",
-  "Yellow Category" : "#eab308",
-  "Green Category"  : "#22c55e",
-  "Blue Category"   : "#3b82f6",
-  "Purple Category" : "#a855f7",
-};
 
 const mig = { running: false, cancel: false };
 let _folderCache    = null;
@@ -243,9 +257,16 @@ async function getRawString(messageId) {
   throw new Error("getRaw: format de retour inattendu");
 }
 
+// Types broadcastés à persister dans storage pour reprise après fermeture du popup
+const PERSISTED_TYPES = new Set([
+  "MIG_PROGRESS","MIG_DONE","MIG_ERROR",
+  "SYNC_PROGRESS","SYNC_ANALYSE_DONE","SYNC_APPLY_PROGRESS","SYNC_APPLY_DONE","SYNC_ERROR",
+  "GRAPH_APPLY_PROGRESS","GRAPH_APPLY_DONE","GRAPH_ERROR",
+]);
+
 function broadcast(msg) {
   messenger.runtime.sendMessage(msg).catch(() => {});
-  if (["MIG_PROGRESS","MIG_DONE","MIG_ERROR","SYNC_PROGRESS","SYNC_DONE"].includes(msg.type))
+  if (PERSISTED_TYPES.has(msg.type))
     messenger.storage.local.set({ [CFG.MIG_STATE_KEY]: { ...msg, ts: Date.now() } });
 }
 
@@ -387,7 +408,7 @@ async function applyTagsToSubject(message) {
 
   const full = await messenger.messages.getFull(message.id);
   const currentSubject =
-    (Array.isArray(full.headers.subject) && full.headers.subject[0]) ||
+    (Array.isArray(full.headers?.subject) && full.headers.subject[0]) ||
     message.subject || "";
   const prefix = tagNames.map(t => `{${t}}`).join("");
   if (currentSubject.startsWith(prefix)) return null;
@@ -471,8 +492,13 @@ async function runSubjectTagAll() {
       try {
         const msgs = await collectMessages(await messenger.messages.list(folder.id ?? folder));
         tagged.push(...msgs.filter(m => m.tags?.length));
-      } catch {}
-      if (folder.subFolders?.length) await scan(folder.subFolders);
+      } catch(e) { console.debug(`[ST] list ${folder.name}:`, e.message); }
+      // Re-fetch subFolders si vide (sur Outlook IMAP, le cache est parfois incomplet)
+      let subs = folder.subFolders ?? [];
+      if (!subs.length) {
+        try { subs = await messenger.folders.getSubFolders(folder.id ?? folder, false); } catch {}
+      }
+      if (subs.length) await scan(subs);
     }
   }
   for (const acc of accounts) {
@@ -573,21 +599,27 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
       const r = await migrateMessageWithFallback(m, dstFolder, mode, crossAccount);
       if (r.ok) {
         progress.done++;
+        if (r.warning) {
+          progress.warnings = progress.warnings || [];
+          progress.warnings.push({ id: m.id, subject: m.subject, reason: r.warning });
+        }
       } else if (r.skipped) {
         progress.skipped = (progress.skipped || 0) + 1;
       } else {
         progress.errors.push({ id: m.id, subject: m.subject, reason: r.error || "unknown" });
       }
-      await sleep(CFG.MSG_DELAY * getDelayMultiplier());
+      await cancellableSleep(CFG.MSG_DELAY * getDelayMultiplier());
     }
 
     broadcast({
       type:"MIG_PROGRESS",
       done: progress.done, total: progress.total,
-      skipped: progress.skipped || 0, errors: progress.errors,
+      skipped: progress.skipped || 0,
+      warnings: progress.warnings || [],
+      errors: progress.errors,
       degraded: health.degraded,
     });
-    await sleep(CFG.BATCH_DELAY * getDelayMultiplier());
+    await cancellableSleep(CFG.BATCH_DELAY * getDelayMultiplier());
 
     // Sortie du mode dégradé si stable depuis longtemps
     if (health.degraded && health.consecutiveErrors === 0 && Date.now() - health.lastErrorAt > 60000) {
@@ -679,8 +711,12 @@ async function analyseBoxes(srcAccountId, dstAccountId) {
               date   : m.date,
             });
         }
-      } catch {}
-      if (folder.subFolders?.length) await scanSrc(folder.subFolders);
+      } catch(e) { console.debug(`[Sync.src] list ${folder.name}:`, e.message); }
+      let subs = folder.subFolders ?? [];
+      if (!subs.length) {
+        try { subs = await messenger.folders.getSubFolders(folder.id ?? folder, false); } catch {}
+      }
+      if (subs.length) await scanSrc(subs);
     }
   }
   const srcFolders = srcAcc.folders ?? await messenger.folders.getSubFolders(srcAcc.rootFolder.id, false);
@@ -700,8 +736,12 @@ async function analyseBoxes(srcAccountId, dstAccountId) {
           if (m.headerMessageId)
             dstIndex.set(m.headerMessageId, { id: m.id, tags: m.tags ?? [] });
         }
-      } catch {}
-      if (folder.subFolders?.length) await scanDst(folder.subFolders);
+      } catch(e) { console.debug(`[Sync.dst] list ${folder.name}:`, e.message); }
+      let subs = folder.subFolders ?? [];
+      if (!subs.length) {
+        try { subs = await messenger.folders.getSubFolders(folder.id ?? folder, false); } catch {}
+      }
+      if (subs.length) await scanDst(subs);
     }
   }
   const dstFolders = dstAcc.folders ?? await messenger.folders.getSubFolders(dstAcc.rootFolder.id, false);
@@ -816,9 +856,11 @@ async function applyCategories(selectedCategories) {
 
   // Appliquer les tags sur chaque message
   for (const cat of selectedCategories) {
+    if (mig.cancel) break;
     if (!cat._resolvedKey) continue; // tag non créé → skip
 
     for (const msg of cat.messages) {
+      if (mig.cancel) break;
       try {
         const current  = await messenger.messages.get(msg.dstId);
         const currTags = current.tags ?? [];
@@ -832,7 +874,7 @@ async function applyCategories(selectedCategories) {
         console.error(`[Sync] Erreur msg ${msg.dstId} :`, e.message);
       }
       broadcast({ type:"SYNC_APPLY_PROGRESS", done, total });
-      if (done % 10 === 0) await sleep(20);
+      if (done % 10 === 0) await cancellableSleep(20);
     }
   }
 
@@ -852,11 +894,20 @@ async function listAddressBooks() {
     for (const book of books) {
       // Ignorer les carnets collectés (bruit)
       if (book.name === "Adresses collectées" || book.name === "Collected Addresses") continue;
+      // En MV3, addressBooks.list() ne renvoie plus les contacts.
+      // Il faut un appel séparé contacts.list(bookId) pour les compter.
+      let count = 0;
+      try {
+        const contacts = await messenger.contacts.list(book.id);
+        count = contacts?.length ?? 0;
+      } catch(e) {
+        console.debug(`[Export] contacts.list(${book.id}) :`, e.message);
+      }
       result.push({
         id   : book.id,
         name : book.name,
         type : book.type ?? "local",
-        count: (book.contacts ?? []).length,
+        count,
       });
     }
     return result;
@@ -870,12 +921,16 @@ async function exportContactsVcf(bookIds) {
   let vcf = "";
   for (const bookId of bookIds) {
     try {
-      const book = await messenger.addressBooks.get(bookId);
-      for (const contact of (book.contacts ?? [])) {
-        if (contact.vCard) vcf += contact.vCard.trim() + "\r\n\r\n";
+      const contacts = await messenger.contacts.list(bookId);
+      for (const contact of (contacts ?? [])) {
+        // En MV3 : la vCard est dans contact.vCard ou contact.properties.vCard
+        const vCard = contact?.vCard
+          ?? contact?.properties?.vCard
+          ?? contact?.properties?.vcard;
+        if (vCard) vcf += vCard.trim() + "\r\n\r\n";
       }
     } catch(e) {
-      console.warn(`[Export] Carnet ${bookId}:`, e);
+      console.warn(`[Export] Carnet ${bookId} :`, e.message);
     }
   }
   return vcf;
@@ -1001,7 +1056,6 @@ const GRAPH_SCOPE     = "Mail.ReadWrite MailboxSettings.ReadWrite";
 // Token en mémoire (session uniquement)
 let _graphToken    = null;
 let _graphTokenExp = 0;
-let _deviceCodeCancel = false;
 
 function isTokenValid() {
   return _graphToken && Date.now() < _graphTokenExp - 60000;
@@ -1188,7 +1242,9 @@ async function applyCategoriesViaGraph(selectedCategories) {
   const errors = [];
 
   for (const cat of selectedCategories) {
+    if (mig.cancel) break;
     for (const msg of cat.messages) {
+      if (mig.cancel) break;
       try {
         // Retrouver le message TB pour obtenir son Internet Message-ID
         const tbMsg = await messenger.messages.get(msg.dstId);
@@ -1213,7 +1269,7 @@ async function applyCategoriesViaGraph(selectedCategories) {
         console.error(`[Graph] Erreur:`, e.message);
       }
       broadcast({ type:"GRAPH_APPLY_PROGRESS", done, total, skipped });
-      if (done % 5 === 0) await sleep(100); // respecter le throttling Graph
+      if (done % 5 === 0) await cancellableSleep(100);
     }
   }
 
@@ -1389,25 +1445,6 @@ async function probeM365Domain(email) {
   };
 }
 
-async function waitForNewAccount(email, timeoutMs=120000) {
-  const start    = Date.now();
-  const emailLow = email.toLowerCase();
-  const before   = new Set((await messenger.accounts.list()).map(a => a.id));
-  return new Promise(resolve => {
-    const poll = async () => {
-      if (Date.now() - start > timeoutMs) { resolve(null); return; }
-      const accounts = await messenger.accounts.list();
-      const newAcc = accounts.find(acc =>
-        !before.has(acc.id) &&
-        acc.identities?.some(id => id.email?.toLowerCase() === emailLow)
-      );
-      if (newAcc) { resolve(newAcc); return; }
-      setTimeout(poll, 2000);
-    };
-    setTimeout(poll, 2000);
-  });
-}
-
 // ─────────────────────────────────────────────────────────────
 // MENU CONTEXTUEL
 // ─────────────────────────────────────────────────────────────
@@ -1457,10 +1494,6 @@ messenger.runtime.onMessage.addListener(async (req) => {
       case "openAccountSetup":
         // TB ne permet pas aux extensions d'ouvrir l'assistant de configuration
         return { ok: true, manual: true };
-      case "waitForNewAccount":
-        waitForNewAccount(req.email, 120000).then(acc =>
-          broadcast({ type:"M365_ACCOUNT_DETECTED", account:acc }));
-        return { started:true };
 
       // ── Étiquettes / Mapping
       case "getTbTagsWithMapping": {
@@ -1531,10 +1564,6 @@ messenger.runtime.onMessage.addListener(async (req) => {
       case "graphIsAuthenticated":
         return { authenticated: isTokenValid() };
 
-      case "graphCancelAuth":
-        _deviceCodeCancel = true;
-        return { ok: true };
-
       case "listOutlookCategories":
         if (!isTokenValid()) return { error: "Non authentifie — connectez-vous d'abord." };
         return { categories: await listOutlookCategories() };
@@ -1567,7 +1596,7 @@ messenger.runtime.onMessage.addListener(async (req) => {
       case "processAll":      return runSubjectTagAll();
       case "processSelected": return runSubjectTagOnIds(req.ids);
 
-      default: return false;
+      default: return { error: `Action inconnue : ${req.action}` };
     }
   } catch(e) {
     console.error("[Mail-CEN] Erreur:", req.action, e);
@@ -1575,4 +1604,4 @@ messenger.runtime.onMessage.addListener(async (req) => {
   }
 });
 
-console.log("[Mail-CEN] Prêt v6.2");
+console.log("[Mail-CEN] Prêt v7.0");

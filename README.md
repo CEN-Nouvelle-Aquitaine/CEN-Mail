@@ -24,7 +24,7 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 1. Ouvrir Thunderbird
 2. Menu **Outils → Modules complémentaires**
 3. Roue dentée → **Installer un module depuis un fichier**
-4. Sélectionner `mail-cen-v6.2.xpi`
+4. Sélectionner `mail-cen-v7.0.xpi`
 
 ## Stack technique
 
@@ -43,25 +43,24 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 CEN-Mail/
 ├── src/                        # Sources décompressées
 │   ├── manifest.json           # Métadonnées extension + permissions (MV3)
-│   ├── background.js           # Logique principale (53 KB)
-│   │                           #   - Config (CFG)
-│   │                           #   - Migration batch avec checkpoints
-│   │                           #   - Synchro 4 phases
-│   │                           #   - Gestion dossiers/tags
+│   ├── background.js           # Logique principale
+│   │                           #   - Config + classification d'erreurs
+│   │                           #   - Migration cascade 3 stratégies + retry
+│   │                           #   - Health monitor (mode dégradé adaptatif)
+│   │                           #   - Synchro étiquettes (analyse + apply)
 │   │                           #   - Microsoft Graph (OAuth2 + catégories)
+│   │                           #   - Export contacts (API contacts MV3)
 │   ├── popup/
-│   │   ├── popup.html          # Interface 7 onglets (39 KB)
-│   │   └── popup.js            # Logique UI (55 KB)
-│   ├── token-exchange.html     # Handler OAuth silencieux
-│   ├── token-exchange.js       # Échange de token Microsoft
+│   │   ├── popup.html          # Interface 7 onglets
+│   │   └── popup.js            # Logique UI + reprise d'état
 │   └── icons/
 │       ├── icon-16.png
 │       ├── icon-32.png
 │       └── icon-64.png
-└── mail-cen-v6.2.xpi          # Extension compilée (prête à installer)
+└── mail-cen-v7.0.xpi          # Extension compilée (prête à installer)
 ```
 
-## Configuration migration (v6.0)
+## Configuration migration (v7.0)
 
 ```javascript
 BATCH_SIZE       = 5       // Petits batchs pour éviter le throttle Outlook IMAP
@@ -100,10 +99,28 @@ Pour recompiler le XPI depuis les sources :
 
 ```bash
 cd src
-zip -r ../mail-cen-v6.2.xpi . -x ".*"
+zip -r ../mail-cen-v7.0.xpi . -x ".*"
 ```
 
 ## Changelog
+
+### v7.0.0 — Audit complet + corrections critiques
+
+**Bugs corrigés :**
+- **Export contacts** : `addressBooks.list()` en MV3 ne renvoie plus `contacts[]`. Migré vers `messenger.contacts.list(bookId)` qui retourne effectivement les contacts. `count` et `.vcf` fonctionnent enfin.
+- **Doublons silencieux mode "Déplacer"** : si `delete` source échoue après `copy`, un `warning` explicite est désormais propagé à la progression au lieu d'une fausse confirmation OK.
+- **Reprise sync après fermeture popup** : `restoreState()` reconnaît tous les types `SYNC_APPLY_DONE`, `SYNC_ANALYSE_DONE`, `GRAPH_APPLY_DONE` et restaure correctement l'état.
+- **Bouton Annuler interruptible** : `cancellableSleep()` remplace les `setTimeout` bloquants. Le retry, le cooldown du mode dégradé et les batchs sync respectent désormais `mig.cancel`.
+- **Récursion sous-dossiers complète** : `analyseBoxes` (scanSrc/scanDst) et `runSubjectTagAll` re-fetchent via `getSubFolders` quand le cache est vide (cohérent avec `migrateFolderRecursive`).
+- **Crash sur message corrompu** : `full.headers?.subject` au lieu de `full.headers.subject`.
+- **Double listener tab Migration** : suppression du `addEventListener` redondant.
+
+**Nettoyage code mort :**
+- Suppression de `src/token-exchange.html` + `.js` (orphelins, le flux PKCE a été remplacé par implicit).
+- Suppression de `OL_CATEGORIES`, `CHECKPOINT_KEY`, `_deviceCodeCancel`, `waitForNewAccount`, action `graphCancelAuth`, broadcast `M365_ACCOUNT_DETECTED`.
+- `default` du switch de messages renvoie une erreur claire au lieu de `false`.
+
+**Conformité TB MV3** : audit final confirmé sur webextension-api.thunderbird.net.
 
 ### v6.2.0 — Création des sous-dossiers robuste
 
