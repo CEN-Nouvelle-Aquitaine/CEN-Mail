@@ -1,23 +1,199 @@
 /**
- * Mail-CEN background.js v5.3
+ * Mail-CEN background.js v6.0
  * Modules : M365 · Étiquettes · Migration · Synchronisation · Export · Tags
  */
 "use strict";
-console.log("[Mail-CEN] Chargement v5.3");
+console.log("[Mail-CEN] Chargement v6.0");
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────────────────────
 const CFG = {
-  BATCH_SIZE    : 20,
-  BATCH_DELAY   : 600,
-  POLL_RETRIES  : 30,
-  POLL_INTERVAL : 500,
-  TEMP_FOLDER   : "Mail-CEN-Temp",
-  CHECKPOINT_KEY: "cen_checkpoint",
-  MAPPING_KEY   : "cen_label_mapping",
-  MIG_STATE_KEY : "cen_mig_state",
+  BATCH_SIZE      : 5,       // Outlook IMAP throttle : petits batchs
+  BATCH_DELAY     : 1500,    // ms entre batchs
+  MSG_DELAY       : 200,     // ms entre messages
+  POLL_RETRIES    : 30,
+  POLL_INTERVAL   : 500,
+  RETRY_MAX       : 4,       // tentatives par opération
+  RETRY_BACKOFF   : 2000,    // délai initial du retry (multiplié)
+  HEALTH_THRESHOLD: 5,       // après N erreurs consécutives → mode dégradé
+  HEALTH_COOLDOWN : 30000,   // pause de récupération en mode dégradé (30s)
+  HEALTH_DELAY_MULT: 3,      // multiplicateur des délais en mode dégradé
+  TEMP_FOLDER     : "Mail-CEN-Temp",
+  CHECKPOINT_KEY  : "cen_checkpoint",
+  MAPPING_KEY     : "cen_label_mapping",
+  MIG_STATE_KEY   : "cen_mig_state",
 };
+
+// Codes d'erreur Mozilla mailnews (en hex et décimal)
+const TRANSIENT_PATTERNS = [
+  "aborted",
+  "timeout",
+  "connection",
+  "network",
+  "interrupt",
+  "offline",
+  "busy",
+  "locked",
+  "imap is busy",
+  "status: 2153054241", // 0x80550021 NS_MSG_ERROR_IMAP_COMMAND_FAILED
+  "status: 0x80550021",
+  "status: 2153054209", // 0x80550001
+  "status: 2147500037", // 0x80004005 NS_ERROR_FAILURE
+];
+
+const PERMANENT_PATTERNS = [
+  "already contains",      // doublon — skip
+  "no such folder",        // dossier supprimé entre-temps
+  "permission denied",
+  "quota",                 // boîte pleine
+  "message-id is null",
+];
+
+function classifyError(e) {
+  const msg = (e?.message || "").toLowerCase();
+  if (PERMANENT_PATTERNS.some(p => msg.includes(p))) return "permanent";
+  if (TRANSIENT_PATTERNS.some(p => msg.includes(p))) return "transient";
+  return "unknown";
+}
+
+// Health monitor — détecte une cascade d'erreurs et passe en mode dégradé
+const health = {
+  consecutiveErrors: 0,
+  degraded: false,
+  totalErrors: 0,
+  lastErrorAt: 0,
+};
+
+function noteSuccess() {
+  health.consecutiveErrors = 0;
+}
+
+async function noteError(e) {
+  health.consecutiveErrors++;
+  health.totalErrors++;
+  health.lastErrorAt = Date.now();
+  if (health.consecutiveErrors >= CFG.HEALTH_THRESHOLD && !health.degraded) {
+    health.degraded = true;
+    console.warn(`[Migration] ⚠️ Cascade de ${health.consecutiveErrors} erreurs — mode dégradé activé (cooldown ${CFG.HEALTH_COOLDOWN}ms)`);
+    broadcast({ type:"MIG_HEALTH", degraded: true, consecutive: health.consecutiveErrors });
+    await new Promise(r => setTimeout(r, CFG.HEALTH_COOLDOWN));
+  }
+  // Sortir du mode dégradé après 10 succès consécutifs (géré dans noteSuccess via reset)
+}
+
+function getDelayMultiplier() {
+  return health.degraded ? CFG.HEALTH_DELAY_MULT : 1;
+}
+
+/** Retry exponentiel ; ne retry que les erreurs classifiées comme transient ou unknown */
+async function withRetry(fn, label = "op") {
+  let lastErr;
+  for (let attempt = 1; attempt <= CFG.RETRY_MAX; attempt++) {
+    try {
+      const r = await fn();
+      if (attempt > 1) console.log(`[Migration] ${label} OK après ${attempt} essais`);
+      return r;
+    } catch(e) {
+      lastErr = e;
+      const cls = classifyError(e);
+      if (cls === "permanent") throw e; // pas de retry sur erreur permanente
+      if (attempt === CFG.RETRY_MAX) throw e;
+      const delay = CFG.RETRY_BACKOFF * attempt * getDelayMultiplier();
+      console.warn(`[Migration] ${label} échec ${cls} (essai ${attempt}/${CFG.RETRY_MAX}), retry dans ${delay}ms : ${e.message}`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Déplace/copie un message avec stratégies en cascade.
+ * Retourne { ok, method } ou { skipped, reason } ou { error }.
+ */
+async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
+  const dstId = dstFolder.id ?? dstFolder;
+
+  // ─── Stratégie 1 : move/copy direct (rapide, pour same-account)
+  if (!crossAccount) {
+    try {
+      await withRetry(async () => {
+        if (mode === "move") await messenger.messages.move([m.id], dstId);
+        else                 await messenger.messages.copy([m.id], dstId);
+      }, `direct-${mode}`);
+      noteSuccess();
+      return { ok: true, method: "direct" };
+    } catch(e) {
+      if (classifyError(e) === "permanent") {
+        if (e.message?.includes("already contains")) return { skipped: true, reason: "doublon" };
+        return { error: e.message };
+      }
+      console.warn(`[Migration] Stratégie 1 (direct) échouée pour "${m.subject?.substring(0,40)}", essai stratégie 2…`);
+      await noteError(e);
+    }
+
+    // ─── Stratégie 2 (same-account uniquement) : copy + delete au lieu de move
+    if (mode === "move") {
+      try {
+        await withRetry(async () => {
+          await messenger.messages.copy([m.id], dstId);
+        }, "copy+delete");
+        try {
+          await withRetry(async () => {
+            await messenger.messages.delete([m.id], { deletePermanently: true });
+          }, "delete-after-copy");
+        } catch(de) {
+          // Le copy a marché mais le delete a échoué — on tolère, c'est juste un doublon source
+          console.warn(`[Migration] delete src échoué après copy (toléré) : ${de.message}`);
+        }
+        noteSuccess();
+        return { ok: true, method: "copy+delete" };
+      } catch(e) {
+        if (classifyError(e) === "permanent" && e.message?.includes("already contains")) {
+          return { skipped: true, reason: "doublon" };
+        }
+        console.warn(`[Migration] Stratégie 2 (copy+delete) échouée, essai stratégie 3 (import)…`);
+        await noteError(e);
+      }
+    }
+  }
+
+  // ─── Stratégie 3 : import via raw eml (cross-account ou fallback ultime)
+  try {
+    let file;
+    await withRetry(async () => {
+      const raw = await getRawString(m.id);
+      const content = raw.replace(/\r/g,"").replace(/\n/g,"\r\n");
+      const bytes = new Uint8Array(content.length);
+      for (let k=0; k<content.length; k++) bytes[k] = content.charCodeAt(k) & 0xff;
+      file = new File([bytes], `${m.id}.eml`, { type:"message/rfc822" });
+    }, "getRaw");
+
+    await withRetry(async () => {
+      await importViaLocalTemp(file, dstFolder, {
+        flagged: m.flagged, read: m.read, tags: m.tags ?? [],
+      });
+    }, "import");
+
+    if (mode === "move") {
+      try {
+        await withRetry(async () => {
+          await messenger.messages.delete([m.id], { deletePermanently: true });
+        }, "delete-after-import");
+      } catch(de) {
+        console.warn(`[Migration] delete src échoué après import (toléré) : ${de.message}`);
+      }
+    }
+    noteSuccess();
+    return { ok: true, method: "import" };
+  } catch(e) {
+    if (e.message?.includes("already contains")) {
+      return { skipped: true, reason: "doublon" };
+    }
+    await noteError(e);
+    return { error: e.message };
+  }
+}
 
 // Outlook catégories standard (clé IMAP → couleur hex)
 const OL_CATEGORIES = {
@@ -290,9 +466,22 @@ async function runSubjectTagAll() {
 /** Import local temp → move vers IMAP (préserve la date via INTERNALDATE) */
 async function importViaLocalTemp(file, dstFolder, props) {
   const temp = await getTempFolder();
-  const localMsg = await messenger.messages.import(file, temp.id ?? temp, props);
+  const tempId = temp.id ?? temp;
+  const dstId  = dstFolder.id ?? dstFolder;
+  const localMsg = await messenger.messages.import(file, tempId, props);
   if (!localMsg) throw new Error("Import local échoué.");
-  await messenger.messages.move([localMsg.id], dstFolder.id ?? dstFolder);
+  // Le move local→IMAP peut échouer en transitoire, retry séparément
+  try {
+    await messenger.messages.move([localMsg.id], dstId);
+  } catch(e) {
+    // Si le move échoue, essayer copy puis delete (atomique différent)
+    try {
+      await messenger.messages.copy([localMsg.id], dstId);
+      try { await messenger.messages.delete([localMsg.id], { deletePermanently: true }); } catch {}
+    } catch {
+      throw e; // remonter l'erreur originale
+    }
+  }
   return localMsg;
 }
 
@@ -332,60 +521,33 @@ async function migrateFolderRecursive(srcFolder, dstFolder, srcAccId, dstAccId, 
     if (mig.cancel) return;
     const batch = all.slice(i, i + CFG.BATCH_SIZE);
 
-    if (!crossAccount) {
-      const ids = batch.map(m => m.id);
-      const dstId = dstFolder.id ?? dstFolder;
-      try {
-        mode === "move"
-          ? await messenger.messages.move(ids, dstId)
-          : await messenger.messages.copy(ids, dstId);
-        progress.done += ids.length;
-      } catch {
-        for (const m of batch) {
-          if (mig.cancel) return;
-          try {
-            mode === "move"
-              ? await messenger.messages.move([m.id], dstId)
-              : await messenger.messages.copy([m.id], dstId);
-            progress.done++;
-          } catch(e) {
-            if (e.message?.includes("already contains")) {
-              progress.skipped = (progress.skipped || 0) + 1;
-            } else {
-              progress.errors.push({ id: m.id, subject: m.subject, reason: e.message });
-            }
-          }
-        }
+    for (const m of batch) {
+      if (mig.cancel) return;
+      const r = await migrateMessageWithFallback(m, dstFolder, mode, crossAccount);
+      if (r.ok) {
+        progress.done++;
+      } else if (r.skipped) {
+        progress.skipped = (progress.skipped || 0) + 1;
+      } else {
+        progress.errors.push({ id: m.id, subject: m.subject, reason: r.error || "unknown" });
       }
-    } else {
-      for (const m of batch) {
-        if (mig.cancel) return;
-        try {
-          const raw = await getRawString(m.id);
-          const content = raw.replace(/\r/g,"").replace(/\n/g,"\r\n");
-          const bytes = new Uint8Array(content.length);
-          for (let k=0; k<content.length; k++) bytes[k] = content.charCodeAt(k) & 0xff;
-          const file = new File([bytes], `${m.id}.eml`, { type:"message/rfc822" });
-
-          await importViaLocalTemp(file, dstFolder, {
-            flagged: m.flagged, read: m.read, tags: m.tags ?? [],
-          });
-          if (mode === "move") await messenger.messages.delete([m.id], { skipTrash: true });
-          progress.done++;
-        } catch(e) {
-          // TB 149 : "already contains a message with id" = doublon, pas une erreur
-          if (e.message?.includes("already contains")) {
-            progress.skipped = (progress.skipped || 0) + 1;
-          } else {
-            progress.errors.push({ id: m.id, subject: m.subject, reason: e.message });
-          }
-        }
-        if (progress.done % 5 === 0) await sleep(50);
-      }
+      await sleep(CFG.MSG_DELAY * getDelayMultiplier());
     }
 
-    broadcast({ type:"MIG_PROGRESS", done: progress.done, total: progress.total, skipped: progress.skipped || 0, errors: progress.errors });
-    await sleep(CFG.BATCH_DELAY);
+    broadcast({
+      type:"MIG_PROGRESS",
+      done: progress.done, total: progress.total,
+      skipped: progress.skipped || 0, errors: progress.errors,
+      degraded: health.degraded,
+    });
+    await sleep(CFG.BATCH_DELAY * getDelayMultiplier());
+
+    // Sortie du mode dégradé si stable depuis longtemps
+    if (health.degraded && health.consecutiveErrors === 0 && Date.now() - health.lastErrorAt > 60000) {
+      health.degraded = false;
+      console.log("[Migration] ✓ Mode dégradé désactivé (connexion stabilisée)");
+      broadcast({ type:"MIG_HEALTH", degraded: false });
+    }
   }
 
   // Récursion sous-dossiers
@@ -1350,4 +1512,4 @@ messenger.runtime.onMessage.addListener(async (req) => {
   }
 });
 
-console.log("[Mail-CEN] Prêt v5.3");
+console.log("[Mail-CEN] Prêt v6.0");

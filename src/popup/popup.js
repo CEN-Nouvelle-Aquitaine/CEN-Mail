@@ -1,5 +1,5 @@
 /**
- * Mail-CEN popup.js v5.3
+ * Mail-CEN popup.js v6.0
  */
 "use strict";
 
@@ -62,6 +62,16 @@ messenger.runtime.onMessage.addListener(msg => {
     // Migration
     case "MIG_PROGRESS":
       setProgress(migBar, migCount, migPct, migProg, msg.done, msg.total);
+      if (msg.degraded) {
+        setStatus(migStatus, "⚠️ Mode dégradé : Outlook ralentit la connexion, le plugin ralentit automatiquement…", "warning");
+      }
+      break;
+    case "MIG_HEALTH":
+      if (msg.degraded) {
+        setStatus(migStatus, `⚠️ Connexion IMAP saturée — pause de récupération en cours…`, "warning");
+      } else {
+        setStatus(migStatus, '<span class="spin"></span> Connexion stabilisée, reprise vitesse normale…', "info");
+      }
       break;
     case "MIG_DONE":    onMigDone(msg);        break;
     case "MIG_ERROR":   onMigError(msg.error); break;
