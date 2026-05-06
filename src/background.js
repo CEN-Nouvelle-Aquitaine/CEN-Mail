@@ -1,9 +1,9 @@
 /**
- * Mail-CEN background.js v7.0
+ * Mail-CEN background.js v7.1
  * Modules : M365 · Étiquettes · Migration · Synchronisation · Export · Tags
  */
 "use strict";
-console.log("[Mail-CEN] Chargement v7.0");
+console.log("[Mail-CEN] Chargement v7.1");
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -180,11 +180,11 @@ async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
   try {
     let file;
     await withRetry(async () => {
-      const raw = await getRawString(m.id);
-      const content = raw.replace(/\r/g,"").replace(/\n/g,"\r\n");
-      const bytes = new Uint8Array(content.length);
-      for (let k=0; k<content.length; k++) bytes[k] = content.charCodeAt(k) & 0xff;
-      file = new File([bytes], `${m.id}.eml`, { type:"message/rfc822" });
+      // TB 128+ : getRaw() renvoie un File. On le passe TEL QUEL à import()
+      // pour préserver l'encodage exact des octets (UTF-8, ISO-8859-1, etc.).
+      // Ne JAMAIS décoder en string puis ré-encoder via charCodeAt — cela
+      // détruirait les caractères UTF-8 multi-octets (é, à, ç, …).
+      file = await getRawFile(m.id);
     }, "getRaw");
 
     await withRetry(async () => {
@@ -248,11 +248,35 @@ async function collectMessages(asyncList) {
   return messages;
 }
 
-/** getRaw retourne un File/Blob depuis TB 128+ — on normalise en string */
+/**
+ * getRawFile : récupère le message en tant que File (octets bruts).
+ * À utiliser pour la migration — préserve l'encodage tel quel.
+ * TB 128+ retourne déjà un File ; pour les anciens TB on recompose les octets
+ * d'une BinaryString sans décoder.
+ */
+async function getRawFile(messageId, filename = `${messageId}.eml`) {
+  const raw = await messenger.messages.getRaw(messageId);
+  if (raw instanceof Blob) {
+    // File hérite de Blob — déjà bon. On force juste le bon mime/nom.
+    return new File([raw], filename, { type: "message/rfc822" });
+  }
+  if (typeof raw === "string") {
+    // BinaryString (1 char = 1 octet). Pas de décodage UTF-8 ici.
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
+    return new File([bytes], filename, { type: "message/rfc822" });
+  }
+  throw new Error("getRaw : format de retour inattendu");
+}
+
+/**
+ * getRawString : récupère le message en tant que string décodée UTF-8.
+ * À n'utiliser QUE pour des manipulations textuelles (ex: applyTagsToSubject).
+ * Surtout PAS pour reconstruire un File à importer — utiliser getRawFile.
+ */
 async function getRawString(messageId) {
   const raw = await messenger.messages.getRaw(messageId);
   if (typeof raw === "string") return raw;
-  // TB 128+ : File ou Blob → utiliser .text()
   if (raw && typeof raw.text === "function") return await raw.text();
   throw new Error("getRaw: format de retour inattendu");
 }
@@ -443,8 +467,9 @@ async function applyTagsToSubject(message) {
   hdr = hdr.substring(2);
 
   const content = hdr + body;
-  const bytes = new Uint8Array(content.length);
-  for (let i = 0; i < content.length; i++) bytes[i] = content.charCodeAt(i) & 0xff;
+  // TextEncoder produit des octets UTF-8 corrects (caractères multi-octets préservés).
+  // L'ancienne version (charCodeAt & 0xff) tronquait les caractères > 0x7F → corruption.
+  const bytes = new TextEncoder().encode(content);
   const file = new File([bytes], `${uid}.eml`, { type:"message/rfc822" });
 
   const temp = await getTempFolder();
@@ -1604,4 +1629,4 @@ messenger.runtime.onMessage.addListener(async (req) => {
   }
 });
 
-console.log("[Mail-CEN] Prêt v7.0");
+console.log("[Mail-CEN] Prêt v7.1");

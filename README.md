@@ -24,7 +24,7 @@ Extension Thunderbird pour la gestion des emails — CEN Nouvelle-Aquitaine
 1. Ouvrir Thunderbird
 2. Menu **Outils → Modules complémentaires**
 3. Roue dentée → **Installer un module depuis un fichier**
-4. Sélectionner `mail-cen-v7.0.xpi`
+4. Sélectionner `mail-cen-v7.1.xpi`
 
 ## Stack technique
 
@@ -57,7 +57,7 @@ CEN-Mail/
 │       ├── icon-16.png
 │       ├── icon-32.png
 │       └── icon-64.png
-└── mail-cen-v7.0.xpi          # Extension compilée (prête à installer)
+└── mail-cen-v7.1.xpi          # Extension compilée (prête à installer)
 ```
 
 ## Configuration migration (v7.0)
@@ -99,10 +99,16 @@ Pour recompiler le XPI depuis les sources :
 
 ```bash
 cd src
-zip -r ../mail-cen-v7.0.xpi . -x ".*"
+zip -r ../mail-cen-v7.1.xpi . -x ".*"
 ```
 
 ## Changelog
+
+### v7.1.0 — Fix encodage UTF-8 sur la migration
+
+- **Caractères français corrompus à la copie** (é, à, ç, etc. → `?`) : la stratégie 3 décodait le raw email en UTF-8 puis utilisait `charCodeAt(i) & 0xff`, ce qui tronquait les caractères multi-octets. Désormais le `File` retourné par `messages.getRaw()` est passé **tel quel** à `messages.import()`, sans aucune conversion intermédiaire.
+- **`applyTagsToSubject`** : même bug, corrigé via `TextEncoder` qui produit des octets UTF-8 propres.
+- Nouveau helper `getRawFile()` (octets bruts) distinct de `getRawString()` (texte UTF-8 décodé).
 
 ### v7.0.0 — Audit complet + corrections critiques
 
