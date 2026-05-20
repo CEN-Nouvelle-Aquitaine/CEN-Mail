@@ -190,7 +190,6 @@ async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
     await withRetry(async () => {
       await importToFolder(file, dstFolder, {
         flagged: m.flagged, read: m.read, tags: m.tags ?? [],
-        date: m.date,
       });
     }, "import");
 
