@@ -126,54 +126,56 @@ async function withRetry(fn, label = "op") {
 async function migrateMessageWithFallback(m, dstFolder, mode, crossAccount) {
   const dstId = dstFolder.id ?? dstFolder;
 
-  // ─── Stratégie 1 : move/copy direct (préserve INTERNALDATE, fonctionne same et cross-account)
-  try {
-    await withRetry(async () => {
-      if (mode === "move") await messenger.messages.move([m.id], dstId);
-      else                 await messenger.messages.copy([m.id], dstId);
-    }, `direct-${mode}`);
-    noteSuccess();
-    return { ok: true, method: "direct" };
-  } catch(e) {
-    if (classifyError(e) === "permanent") {
-      if (e.message?.includes("already contains")) return { skipped: true, reason: "doublon" };
-      return { error: e.message };
-    }
-    console.warn(`[Migration] Stratégie 1 (direct) échouée pour "${m.subject?.substring(0,40)}", essai stratégie 2…`);
-    await noteError(e);
-  }
-
-  // ─── Stratégie 2 : copy + delete (fallback si move direct échoue)
-  if (mode === "move") {
+  // ─── Stratégie 1 : move/copy direct (rapide, pour same-account)
+  if (!crossAccount) {
     try {
       await withRetry(async () => {
-        await messenger.messages.copy([m.id], dstId);
-      }, "copy+delete");
-      let srcDeleted = true;
+        if (mode === "move") await messenger.messages.move([m.id], dstId);
+        else                 await messenger.messages.copy([m.id], dstId);
+      }, `direct-${mode}`);
+      noteSuccess();
+      return { ok: true, method: "direct" };
+    } catch(e) {
+      if (classifyError(e) === "permanent") {
+        if (e.message?.includes("already contains")) return { skipped: true, reason: "doublon" };
+        return { error: e.message };
+      }
+      console.warn(`[Migration] Stratégie 1 (direct) échouée pour "${m.subject?.substring(0,40)}", essai stratégie 2…`);
+      await noteError(e);
+    }
+
+    // ─── Stratégie 2 (same-account uniquement) : copy + delete au lieu de move
+    if (mode === "move") {
       try {
         await withRetry(async () => {
-          await messenger.messages.delete([m.id], { deletePermanently: true });
-        }, "delete-after-copy");
-      } catch(de) {
-        srcDeleted = false;
-        console.warn(`[Migration] copy OK mais delete src échoué : "${m.subject?.substring(0,40)}" — ${de.message}`);
+          await messenger.messages.copy([m.id], dstId);
+        }, "copy+delete");
+        let srcDeleted = true;
+        try {
+          await withRetry(async () => {
+            await messenger.messages.delete([m.id], { deletePermanently: true });
+          }, "delete-after-copy");
+        } catch(de) {
+          srcDeleted = false;
+          console.warn(`[Migration] copy OK mais delete src échoué : "${m.subject?.substring(0,40)}" — ${de.message}`);
+        }
+        noteSuccess();
+        return {
+          ok: true,
+          method: srcDeleted ? "copy+delete" : "copy-only",
+          warning: srcDeleted ? null : "Message copié mais non supprimé de la source (doublon résiduel)",
+        };
+      } catch(e) {
+        if (classifyError(e) === "permanent" && e.message?.includes("already contains")) {
+          return { skipped: true, reason: "doublon" };
+        }
+        console.warn(`[Migration] Stratégie 2 (copy+delete) échouée, essai stratégie 3 (import)…`);
+        await noteError(e);
       }
-      noteSuccess();
-      return {
-        ok: true,
-        method: srcDeleted ? "copy+delete" : "copy-only",
-        warning: srcDeleted ? null : "Message copié mais non supprimé de la source (doublon résiduel)",
-      };
-    } catch(e) {
-      if (classifyError(e) === "permanent" && e.message?.includes("already contains")) {
-        return { skipped: true, reason: "doublon" };
-      }
-      console.warn(`[Migration] Stratégie 2 (copy+delete) échouée, essai stratégie 3 (import)…`);
-      await noteError(e);
     }
   }
 
-  // ─── Stratégie 3 : import via raw eml (fallback ultime si move/copy impossibles)
+  // ─── Stratégie 3 : import via raw eml (cross-account ou fallback ultime)
   try {
     let file;
     await withRetry(async () => {
