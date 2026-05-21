@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Mail-Migrator CEN</title>
+  <style>
+    :root {
+      --bg:        #f4f7f4;
+      --surface:   #ffffff;
+      --border:    #c8ddc8;
+      --border-s:  #e8f0e8;
+      --primary:   #2d6a2d;
+      --primary-h: #235523;
+      --primary-l: #e8f5e9;
+      --accent:    #4caf50;
+      --orange:    #e07c3a;
+      --orange-l:  #fef3e8;
+      --success:   #2e7d32;
+      --success-l: #e8f5e9;
+      --error:     #c62828;
+      --error-l:   #ffebee;
+      --warning:   #e65100;
+      --warning-l: #fff3e0;
+      --text:      #1a2e1a;
+      --text-2:    #4a6741;
+      --text-3:    #8aaa87;
+      --radius:    8px;
+      --radius-sm: 5px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 580px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ── Header ── */
+    .hdr {
+      background: linear-gradient(135deg, #1a3d1a 0%, #2d6a2d 100%);
+      color: #fff;
+      padding: 11px 16px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .hdr-logo {
+      width: 36px; height: 36px;
+      background: rgba(255,255,255,.12);
+      border-radius: 8px; display: flex; align-items: center;
+      justify-content: center; font-size: 20px; flex-shrink: 0;
+    }
+    .hdr-title { font-size: 16px; font-weight: 700; letter-spacing: .3px; }
+    .hdr-sub   { font-size: 10.5px; opacity: .7; margin-top: 1px; }
+    .hdr-badge {
+      margin-left: auto;
+      background: rgba(255,255,255,.15);
+      border-radius: 99px; padding: 2px 9px;
+      font-size: 10px; font-family: monospace; opacity: .8;
+    }
+
+    /* ── Commun ── */
+    .sect {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .8px; color: var(--text-3); margin-bottom: 8px;
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 8px 14px; border: none; border-radius: var(--radius);
+      font-size: 12.5px; font-weight: 500;
+      cursor: pointer; transition: background .12s, transform .1s;
+      white-space: nowrap;
+    }
+    .btn:active  { transform: scale(.98); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-h); }
+    .btn-orange  { background: var(--orange); color: #fff; }
+    .btn-orange:hover:not(:disabled)  { background: #c96b2f; }
+    .btn-ghost   { background: var(--border-s); color: var(--text-2); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled)   { background: var(--border); }
+    .btn-danger  { background: var(--error-l); color: var(--error); border: 1px solid #f5c6c6; }
+    .btn-danger:hover:not(:disabled)  { background: #ffc9c9; }
+    .btn-sm   { padding: 5px 10px; font-size: 12px; }
+    .btn-full { width: 100%; justify-content: center; }
+
+    select {
+      width: 100%; padding: 7px 10px;
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface); font-size: 12.5px; color: var(--text);
+      outline: none; transition: border-color .15s;
+    }
+    select:focus { border-color: var(--accent); }
+
+    .form-label {
+      display: block; font-size: 11.5px; font-weight: 500;
+      color: var(--text-2); margin-bottom: 5px;
+    }
+    .form-row { margin-bottom: 12px; }
+
+    .status {
+      display: none; margin-top: 10px; padding: 8px 11px;
+      border-radius: var(--radius); font-size: 12px; line-height: 1.5;
+    }
+    .status.show    { display: block; }
+    .status.info    { background: var(--primary-l); color: #1b4d1b; border-left: 3px solid var(--accent); }
+    .status.success { background: var(--success-l); color: #1b4d1b; border-left: 3px solid var(--success); }
+    .status.error   { background: var(--error-l);   color: #7f1919; border-left: 3px solid var(--error); }
+    .status.warning { background: var(--warning-l); color: #7f3300; border-left: 3px solid var(--warning); }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px;
+    }
+
+    .spin {
+      display: inline-block; width: 11px; height: 11px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; animation: rot .55s linear infinite;
+    }
+    @keyframes rot { to { transform: rotate(360deg); } }
+
+    hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    /* ── Steps ── */
+    .step { padding: 14px 14px 16px; }
+
+    /* ── Arbre de dossiers ── */
+    .tree-container {
+      max-height: 240px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .tree-toolbar {
+      display: flex; gap: 5px; align-items: center;
+      padding: 5px 8px;
+      background: var(--border-s);
+      border-bottom: 1px solid var(--border);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .tree-toolbar span { font-size: 11px; color: var(--text-3); margin-right: auto; }
+
+    /* Compte (en-tête de groupe) */
+    .acc-hdr {
+      padding: 6px 10px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--text-3);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border-s);
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    /* Nœud dossier */
+    .f-node {}
+    .f-header {
+      display: flex; align-items: center; gap: 5px;
+      padding: 5px 10px; cursor: pointer;
+      transition: background .1s;
+      border-bottom: 1px solid var(--border-s);
+    }
+    .f-header:hover { background: var(--bg); }
+
+    .f-toggle {
+      width: 14px; font-size: 9px; color: var(--text-3);
+      cursor: pointer; user-select: none; flex-shrink: 0;
+      text-align: center; line-height: 1;
+    }
+    .f-toggle.clickable { color: var(--primary); }
+
+    .f-cb { flex-shrink: 0; cursor: pointer; accent-color: var(--accent); }
+
+    .f-icon { font-size: 13px; flex-shrink: 0; }
+
+    .f-name {
+      flex: 1; font-size: 12.5px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .f-children { display: none; }
+    .f-children.open { display: block; }
+
+    .tree-empty {
+      padding: 18px; text-align: center;
+      font-size: 12px; color: var(--text-3);
+    }
+
+    /* ── Barre de progression ── */
+    .prog { margin-top: 12px; }
+    .prog-track {
+      height: 8px; background: var(--border);
+      border-radius: 99px; overflow: hidden;
+    }
+    .prog-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
+      border-radius: 99px; transition: width .3s ease;
+      width: 0%;
+    }
+    .prog-info {
+      display: flex; justify-content: space-between;
+      margin-top: 5px; font-size: 11px; color: var(--text-3);
+    }
+    .prog-folder {
+      margin-top: 5px; font-size: 11.5px; color: var(--text-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .prog-meta {
+      margin-top: 3px; font-size: 11px; color: var(--text-3);
+    }
+
+    /* ── Résultats ── */
+    .res-stats {
+      display: flex; gap: 10px; margin-bottom: 14px;
+    }
+    .res-stat {
+      flex: 1; text-align: center;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 10px 8px;
+    }
+    .res-stat-num   { font-size: 24px; font-weight: 700; }
+    .res-stat-label { font-size: 10.5px; color: var(--text-3); margin-top: 2px; }
+    .res-stat.ok  .res-stat-num { color: var(--success); }
+    .res-stat.dupe .res-stat-num { color: var(--orange); }
+    .res-stat.err  .res-stat-num { color: var(--error); }
+
+    /* ── Liste des doublons ── */
+    .dupes-section { margin-top: 10px; }
+    .dupes-toolbar {
+      display: flex; gap: 5px; align-items: center;
+      padding: 5px 8px;
+      background: var(--border-s);
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      font-size: 11px;
+    }
+    .dupes-toolbar span { color: var(--text-3); }
+    .dupes-list {
+      max-height: 200px; overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 0 0 var(--radius) var(--radius);
+      background: var(--surface);
+    }
+    .dup-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--border-s);
+      transition: background .1s;
+    }
+    .dup-row:last-child { border-bottom: none; }
+    .dup-row:hover { background: var(--bg); }
+    .dup-cb { flex-shrink: 0; margin-top: 2px; cursor: pointer; accent-color: var(--accent); }
+    .dup-info { flex: 1; min-width: 0; }
+    .dup-subject {
+      font-size: 12.5px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .dup-meta { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+    /* ── Log erreurs ── */
+    .err-log {
+      max-height: 80px; overflow-y: auto;
+      font-size: 11px; line-height: 1.5; color: var(--error);
+      background: var(--error-l); padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="hdr-logo">
+    <img src="data:image/png;base64,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"
+         alt="CEN" style="width:28px;height:28px;border-radius:4px;">
+  </div>
+  <div>
+    <div class="hdr-title">Mail-Migrator CEN</div>
+    <div class="hdr-sub">Migration dossiers locaux → Outlook · dates préservées</div>
+  </div>
+  <span class="hdr-badge">v1.0.0</span>
+</div>
+
+<!-- ═══════ ÉTAPE 1 : SÉLECTION ═══════ -->
+<div class="step" id="step-setup">
+
+  <div class="sect">Dossiers locaux à copier</div>
+
+  <!-- Barre de sélection rapide + arbre -->
+  <div class="tree-toolbar" style="border-radius: var(--radius) var(--radius) 0 0; border: 1px solid var(--border); border-bottom: none;">
+    <span>Cochez les dossiers à migrer</span>
+    <button class="btn btn-ghost btn-sm" id="sel-all">Tout ☑</button>
+    <button class="btn btn-ghost btn-sm" id="sel-none">Tout ☐</button>
+    <button class="btn btn-ghost btn-sm" id="btn-refresh" title="Actualiser">↻</button>
+  </div>
+  <div class="tree-container" style="border-radius: 0 0 var(--radius) var(--radius);">
+    <div id="local-tree">
+      <div class="tree-empty"><span class="spin"></span> Chargement des dossiers…</div>
+    </div>
+  </div>
+
+  <div class="form-row" style="margin-top: 12px;">
+    <label class="form-label">📁 Dossier de destination dans Outlook</label>
+    <select id="dst-select">
+      <option value="">— Chargement… —</option>
+    </select>
+    <div style="font-size:11px;color:var(--text-3);margin-top:4px">
+      Les dossiers sélectionnés seront créés à l'intérieur de ce dossier Outlook.
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; margin-top:4px;">
+    <button class="btn btn-primary btn-full" id="btn-start">▶ Démarrer la copie</button>
+  </div>
+
+  <div class="status" id="setup-status"></div>
+</div>
+
+<!-- ═══════ ÉTAPE 2 : PROGRESSION ═══════ -->
+<div class="step" id="step-progress" style="display:none;">
+
+  <div style="text-align:center; padding: 8px 0 14px;">
+    <div style="font-size:15px; font-weight:700; color:var(--primary);">
+      Copie en cours…
+    </div>
+    <div style="font-size:11.5px; color:var(--text-3); margin-top:3px;">
+      La source n'est pas modifiée. Ne fermez pas Thunderbird.
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px;">
+    <div class="prog">
+      <div class="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
+      <div class="prog-info">
+        <span id="prog-count">0 / 0</span>
+        <span id="prog-pct">0%</span>
+      </div>
+      <div class="prog-folder" id="prog-folder">Initialisation…</div>
+      <div class="prog-meta" id="prog-meta"></div>
+    </div>
+  </div>
+
+  <button class="btn btn-danger btn-full" id="btn-cancel">✕ Annuler la copie</button>
+</div>
+
+<!-- ═══════ ÉTAPE 3 : RÉSULTATS ═══════ -->
+<div class="step" id="step-results" style="display:none;">
+
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+    <span id="res-icon" style="font-size:22px;">✅</span>
+    <div>
+      <div id="res-title" style="font-size:15px; font-weight:700; color:var(--success);">Migration terminée</div>
+      <div id="res-subtitle" style="font-size:11.5px; color:var(--text-3); margin-top:2px;"></div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="res-stats">
+    <div class="res-stat ok">
+      <div class="res-stat-num" id="res-done">0</div>
+      <div class="res-stat-label">Copiés</div>
+    </div>
+    <div class="res-stat dupe">
+      <div class="res-stat-num" id="res-dupes">0</div>
+      <div class="res-stat-label">Doublons</div>
+    </div>
+    <div class="res-stat err">
+      <div class="res-stat-num" id="res-errors">0</div>
+      <div class="res-stat-label">Erreurs</div>
+    </div>
+  </div>
+
+  <!-- Log erreurs -->
+  <div class="err-log" id="res-errlog" style="display:none;"></div>
+
+  <!-- Section doublons -->
+  <div id="res-dupes-section" style="display:none;">
+    <hr>
+    <div class="sect">Doublons détectés — déjà présents dans Outlook</div>
+    <div style="font-size:11.5px; color:var(--text-2); margin-bottom:8px; line-height:1.5;">
+      Ces messages existent déjà dans le dossier de destination.
+      Cochez ceux que vous souhaitez quand même copier, puis confirmez.
+    </div>
+
+    <div class="dupes-section">
+      <div class="dupes-toolbar">
+        <span id="dupes-count-label">0 doublon(s)</span>
+        <div style="margin-left:auto; display:flex; gap:5px;">
+          <button class="btn btn-ghost btn-sm" id="sel-dupes-all">Tout ☑</button>
+          <button class="btn btn-ghost btn-sm" id="sel-dupes-none">Tout ☐</button>
+        </div>
+      </div>
+      <div class="dupes-list" id="dupes-list"></div>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button class="btn btn-orange" id="btn-force" style="flex:1;">
+        ↺ Copier quand même les sélectionnés
+      </button>
+    </div>
+  </div>
+
+  <div class="status" id="res-status"></div>
+
+  <hr>
+  <button class="btn btn-ghost btn-full" id="btn-restart">↩ Nouvelle migration</button>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
