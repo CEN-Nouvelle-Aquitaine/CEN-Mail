@@ -1,15 +1,20 @@
 /**
- * Mail-Migrator CEN — background.js v1.1.0
+ * Mail-Migrator CEN — background.js v1.3.0
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
  * que le glisser-déposer), ce qui garantit la préservation de la date
  * originale (INTERNALDATE IMAP) — contrairement à messages.import() qui passe
  * par un APPEND brut sans INTERNALDATE.
+ *
+ * Persistance : chaque état important est sauvegardé dans storage.local
+ * sous la clé STATE_KEY. Le popup le lit à l'ouverture pour se restaurer.
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.1.0");
+console.log("[Mail-Migrator CEN] Chargé v1.3.0");
+
+const STATE_KEY = "mig_state";
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -51,8 +56,14 @@ const state = { running: false, cancel: false };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Types à persister dans storage (pour restauration au réouverture du popup)
+const PERSIST_TYPES = new Set(["COPY_PROGRESS","COPY_DONE","COPY_ERROR","FORCE_DONE"]);
+
 function broadcast(msg) {
   messenger.runtime.sendMessage(msg).catch(() => {});
+  if (PERSIST_TYPES.has(msg.type)) {
+    messenger.storage.local.set({ [STATE_KEY]: { ...msg, ts: Date.now() } });
+  }
 }
 
 function isPermErr(e) {
@@ -399,6 +410,18 @@ messenger.runtime.onMessage.addListener(async (req) => {
 
       case "cancel":
         state.cancel = true;
+        return { ok: true };
+
+      case "isRunning":
+        return { running: state.running };
+
+      case "getMigState": {
+        const s = await messenger.storage.local.get(STATE_KEY);
+        return s[STATE_KEY] ?? null;
+      }
+
+      case "clearMigState":
+        await messenger.storage.local.remove(STATE_KEY);
         return { ok: true };
 
       default:

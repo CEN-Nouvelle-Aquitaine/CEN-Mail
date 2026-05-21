@@ -21,6 +21,8 @@ function goStep(step) {
   ["step-setup","step-progress","step-results"].forEach(id => {
     $(id).style.display = id === step ? "" : "none";
   });
+  const badge = $("hdr-running");
+  if (badge) badge.style.display = step === "step-progress" ? "" : "none";
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -371,10 +373,64 @@ async function loadFolderTree() {
 // INIT
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// RESTAURATION D'ÉTAT AU RÉOUVERTURE DU POPUP
+// ─────────────────────────────────────────────────────────────
+
+async function restoreState() {
+  // 1. Demander l'état persisté
+  const saved = await messenger.runtime.sendMessage({ action: "getMigState" });
+  if (!saved) return false; // Rien à restaurer
+
+  // 2. Vérifier si une migration est encore en cours
+  const { running } = await messenger.runtime.sendMessage({ action: "isRunning" });
+
+  switch (saved.type) {
+
+    case "COPY_PROGRESS":
+      if (running) {
+        // Migration toujours en cours → afficher l'écran de progression
+        goStep("step-progress");
+        updateProgress(saved);
+        $("btn-cancel").disabled = false;
+        return true;
+      }
+      // Le background est mort entre temps (TB redémarré) → cleanup
+      await messenger.runtime.sendMessage({ action: "clearMigState" });
+      return false;
+
+    case "COPY_DONE":
+      // Résultats disponibles → restaurer l'écran de résultats
+      showResults(saved);
+      return true;
+
+    case "COPY_ERROR":
+      // Erreur précédente → l'afficher sur l'écran de setup
+      setStatus("setup-status", "error", `Dernière erreur : ${escHtml(saved.error)}`);
+      return false; // On reste sur setup pour permettre de relancer
+
+    case "FORCE_DONE":
+      // Force-copy terminé mais popup fermé avant → juste afficher setup
+      await messenger.runtime.sendMessage({ action: "clearMigState" });
+      return false;
+  }
+
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────
+
 document.addEventListener("DOMContentLoaded", async () => {
 
+  // Tenter de restaurer un état existant avant de charger l'arbre
   goStep("step-setup");
-  await loadFolderTree();
+  const restored = await restoreState();
+
+  // Charger l'arbre seulement si on est (ou reste) sur le setup
+  const onSetup = $("step-setup").style.display !== "none";
+  if (onSetup) await loadFolderTree();
 
   // ── Sélection rapide ──
   $("sel-all").addEventListener("click", () => {
@@ -438,9 +494,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("btn-force").addEventListener("click", forceCopySelected);
 
   // ── Recommencer ──
-  $("btn-restart").addEventListener("click", () => {
+  $("btn-restart").addEventListener("click", async () => {
+    // Effacer l'état persisté
+    await messenger.runtime.sendMessage({ action: "clearMigState" });
+
     // Reset progress display
-    $("prog-fill").style.width = "0%";
+    $("prog-fill").style.width  = "0%";
     $("prog-count").textContent = "0 / 0";
     $("prog-pct").textContent   = "0%";
     $("prog-meta").textContent  = "";
@@ -456,6 +515,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     _duplicates = [];
 
     goStep("step-setup");
+    await loadFolderTree();
   });
 
   // ── Écoute des messages background ──

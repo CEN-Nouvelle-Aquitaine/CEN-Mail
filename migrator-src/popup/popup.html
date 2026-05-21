@@ -119,7 +119,8 @@
       border: 2px solid currentColor; border-top-color: transparent;
       border-radius: 50%; animation: rot .55s linear infinite;
     }
-    @keyframes rot { to { transform: rotate(360deg); } }
+    @keyframes rot   { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
 
     hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 
@@ -284,7 +285,8 @@
     <div class="hdr-title">Mail-Migrator CEN</div>
     <div class="hdr-sub">Migration dossiers locaux → Outlook · dates préservées</div>
   </div>
-  <span class="hdr-badge">v1.2.0</span>
+  <span id="hdr-running" style="display:none;background:#e07c3a;border-radius:99px;padding:2px 9px;font-size:10px;font-family:monospace;animation:pulse 1.2s ease-in-out infinite;">⏳ En cours</span>
+  <span class="hdr-badge">v1.3.0</span>
 </div>
 
 <!-- ═══════ ÉTAPE 1 : SÉLECTION ═══════ -->
