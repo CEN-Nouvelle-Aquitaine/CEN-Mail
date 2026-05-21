@@ -14,13 +14,31 @@ console.log("[Mail-Migrator CEN] Chargé v1.1.0");
 // ─────────────────────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────────────────────
-const CFG = {
-  BATCH_SIZE   : 5,     // messages par batch (throttle IMAP Outlook)
-  BATCH_DELAY  : 1200,  // ms entre batchs
-  MSG_DELAY    : 150,   // ms entre messages au sein d'un batch
-  RETRY_MAX    : 3,
-  RETRY_BACKOFF: 2000,  // ms (× numéro d'essai)
+
+// Profils de temporisation — l'UI transmet le nom du profil choisi
+const SPEED_PROFILES = {
+  rapide  : { batchSize: 10, batchDelay:  600, msgDelay:  80 },
+  normal  : { batchSize:  5, batchDelay: 1500, msgDelay: 200 },
+  prudent : { batchSize:  3, batchDelay: 3000, msgDelay: 500 },
+  lent    : { batchSize:  1, batchDelay: 5000, msgDelay: 800 },
 };
+
+// Profil actif (modifié au démarrage de chaque copie)
+let CFG = {
+  BATCH_SIZE   : 5,
+  BATCH_DELAY  : 1500,
+  MSG_DELAY    : 200,
+  RETRY_MAX    : 3,
+  RETRY_BACKOFF: 2000,
+};
+
+function applySpeedProfile(profileName) {
+  const p = SPEED_PROFILES[profileName] ?? SPEED_PROFILES.normal;
+  CFG.BATCH_SIZE  = p.batchSize;
+  CFG.BATCH_DELAY = p.batchDelay;
+  CFG.MSG_DELAY   = p.msgDelay;
+  console.log(`[Migrator] Profil de vitesse : ${profileName} — batch=${p.batchSize}, batchDelay=${p.batchDelay}ms, msgDelay=${p.msgDelay}ms`);
+}
 
 // ─────────────────────────────────────────────────────────────
 // ÉTAT
@@ -210,9 +228,10 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 // POINT D'ENTRÉE : DÉMARRER LA COPIE
 // ─────────────────────────────────────────────────────────────
 
-async function startCopy(srcFolderIds, dstFolderId) {
+async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal") {
   state.running = true;
   state.cancel  = false;
+  applySpeedProfile(speedProfile);
 
   const progress = { done: 0, total: 0, duplicates: [], errors: [] };
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: "" });
@@ -362,7 +381,7 @@ messenger.runtime.onMessage.addListener(async (req) => {
 
       case "startCopy": {
         if (state.running) return { error: "Une migration est déjà en cours." };
-        startCopy(req.srcFolderIds, req.dstFolderId).catch(e => {
+        startCopy(req.srcFolderIds, req.dstFolderId, req.speedProfile).catch(e => {
           state.running = false;
           broadcast({ type: "COPY_ERROR", error: e.message });
         });

@@ -220,6 +220,14 @@ function updateProgress(msg) {
   if (msg.currentFolder) {
     $("prog-folder").textContent = `📁 ${msg.currentFolder}`;
   }
+
+  // Rappel du profil de vitesse actif
+  const profileLabel = { rapide: "⚡ Rapide", normal: "▶ Normal", prudent: "🐢 Prudent", lent: "🐌 Lent" };
+  const speedEl = $("prog-speed");
+  if (speedEl) {
+    const sel = $("speed-select");
+    speedEl.textContent = sel ? (profileLabel[sel.value] || "") : "";
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -402,6 +410,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       action      : "startCopy",
       srcFolderIds,
       dstFolderId : _dstFolderId,
+      speedProfile: $("speed-select").value,
     });
 
     if (r?.error) {
