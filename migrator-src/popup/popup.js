@@ -33,6 +33,37 @@ let _duplicates    = [];   // liste complète des doublons reçus à la fin
 let _dstFolderId   = null; // dossier destination choisi pour la migration
 
 // ─────────────────────────────────────────────────────────────
+// JOURNAL
+// ─────────────────────────────────────────────────────────────
+
+const LOG_COLORS = { ok: "#7ecb7e", warn: "#f0b96a", error: "#e07070", info: "#b8d4b8" };
+
+function appendLog(line, panelId = "log-panel") {
+  const panel = $(panelId);
+  if (!panel) return;
+  const ts    = new Date(line.ts).toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+  const color = LOG_COLORS[line.level] ?? LOG_COLORS.info;
+  const row   = document.createElement("div");
+  row.style.color = color;
+  row.textContent = `[${ts}] ${line.text}`;
+  panel.appendChild(row);
+  // Auto-scroll vers le bas
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function populateLog(lines) {
+  const panel    = $("log-panel");
+  const panelRes = $("log-panel-res");
+  if (panel)    panel.innerHTML    = "";
+  if (panelRes) panelRes.innerHTML = "";
+  if (!lines?.length) return;
+  for (const line of lines) {
+    if (panel)    appendLog(line, "log-panel");
+    if (panelRes) appendLog(line, "log-panel-res");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // ARBRE DE DOSSIERS LOCAUX
 // ─────────────────────────────────────────────────────────────
 
@@ -238,6 +269,14 @@ function updateProgress(msg) {
 
 function showResults(msg) {
   _duplicates = msg.duplicates || [];
+  // Copier le journal dans le panneau résultats
+  if (msg.log?.length) {
+    const panelRes = $("log-panel-res");
+    if (panelRes) {
+      panelRes.innerHTML = "";
+      for (const line of msg.log) appendLog(line, "log-panel-res");
+    }
+  }
 
   goStep("step-results");
 
@@ -392,6 +431,7 @@ async function restoreState() {
         // Migration toujours en cours → afficher l'écran de progression
         goStep("step-progress");
         updateProgress(saved);
+        if (saved.log?.length) populateLog(saved.log);
         $("btn-cancel").disabled = false;
         return true;
       }
@@ -442,6 +482,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ── Actualiser l'arbre ──
   $("btn-refresh").addEventListener("click", loadFolderTree);
+
+  // ── Effacer le journal ──
+  $("btn-log-clear").addEventListener("click", () => {
+    const p = $("log-panel");
+    if (p) p.innerHTML = "";
+  });
+
+  // ── Toggle icône du détail journal ──
+  const logDetails = $("log-details");
+  if (logDetails) {
+    logDetails.addEventListener("toggle", () => {
+      const ico = $("log-toggle-ico");
+      if (ico) ico.textContent = logDetails.open ? "▼" : "▶";
+    });
+  }
 
   // ── Démarrer la migration ──
   $("btn-start").addEventListener("click", async () => {
@@ -524,6 +579,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     switch (msg.type) {
 
+      case "LOG":
+        appendLog(msg, "log-panel");
+        appendLog(msg, "log-panel-res");
+        break;
+
       case "COPY_PROGRESS":
         updateProgress(msg);
         break;
@@ -533,6 +593,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         break;
 
       case "COPY_ERROR":
+        appendLog({ level:"error", text:`✗ Erreur fatale : ${msg.error}`, ts: Date.now() }, "log-panel");
         goStep("step-setup");
         setStatus("setup-status", "error", `Erreur : ${escHtml(msg.error)}`);
         break;

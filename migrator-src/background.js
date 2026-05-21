@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.3.0
+ * Mail-Migrator CEN — background.js v1.4.0
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.3.0");
+console.log("[Mail-Migrator CEN] Chargé v1.4.0");
 
 const STATE_KEY = "mig_state";
 
@@ -50,19 +50,36 @@ function applySpeedProfile(profileName) {
 // ─────────────────────────────────────────────────────────────
 const state = { running: false, cancel: false };
 
+// Journal en mémoire (inclus dans chaque snapshot persisté)
+const LOG_MAX  = 150;
+const logLines = [];
+
 // ─────────────────────────────────────────────────────────────
 // UTILITAIRES
 // ─────────────────────────────────────────────────────────────
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/**
+ * Ajoute une ligne au journal et la diffuse immédiatement au popup.
+ * level : "info" | "ok" | "warn" | "error"
+ */
+function log(level, text) {
+  const line = { level, text, ts: Date.now() };
+  logLines.push(line);
+  if (logLines.length > LOG_MAX) logLines.shift();
+  messenger.runtime.sendMessage({ type: "LOG", ...line }).catch(() => {});
+}
+
 // Types à persister dans storage (pour restauration au réouverture du popup)
 const PERSIST_TYPES = new Set(["COPY_PROGRESS","COPY_DONE","COPY_ERROR","FORCE_DONE"]);
 
 function broadcast(msg) {
-  messenger.runtime.sendMessage(msg).catch(() => {});
+  // Inclure le journal dans chaque snapshot pour pouvoir le restaurer
+  const payload = PERSIST_TYPES.has(msg.type) ? { ...msg, log: [...logLines] } : msg;
+  messenger.runtime.sendMessage(payload).catch(() => {});
   if (PERSIST_TYPES.has(msg.type)) {
-    messenger.storage.local.set({ [STATE_KEY]: { ...msg, ts: Date.now() } });
+    messenger.storage.local.set({ [STATE_KEY]: { ...payload, ts: Date.now() } });
   }
 }
 
@@ -117,19 +134,23 @@ async function ensureSubFolder(parentFolderId, name) {
   const existing = subs.find(f => f.name === name);
   if (existing) return existing;
 
+  log("info", `📂 Création dossier : ${name}`);
   try {
-    return await withRetry(
+    const created = await withRetry(
       () => messenger.folders.create(parentFolderId, name),
       `create-folder-${name}`
     );
+    log("ok", `✓ Dossier créé : ${name}`);
+    return created;
   } catch(e) {
     // Outlook IMAP : parfois la création réussit mais lève quand même une erreur
     await sleep(1000);
     try {
       const subs2 = await messenger.folders.getSubFolders(parentFolderId, false);
       const found = subs2.find(f => f.name === name);
-      if (found) return found;
+      if (found) { log("warn", `⚠ Dossier ${name} : erreur à la création mais dossier existant trouvé`); return found; }
     } catch {}
+    log("error", `✗ Impossible de créer le dossier ${name} : ${e.message}`);
     throw e;
   }
 }
@@ -153,8 +174,9 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
   try {
     const dstMsgs = await getAllMessages(dstId);
     for (const m of dstMsgs) if (m.headerMessageId) dstIndex.add(m.headerMessageId);
+    if (dstMsgs.length) log("info", `🔍 Index destination "${dstFolder.name}" : ${dstMsgs.length} message(s) existant(s)`);
   } catch(e) {
-    console.warn(`[Migrator] Impossible d'indexer destination "${dstFolder.name}" :`, e.message);
+    log("warn", `⚠ Impossible d'indexer "${dstFolder.name}" : ${e.message}`);
   }
 
   // ── Lister les messages sources
@@ -162,7 +184,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
   try {
     srcMsgs = await getAllMessages(srcId);
   } catch(e) {
-    console.warn(`[Migrator] list "${srcFolder.name}" :`, e.message);
+    log("error", `✗ Lecture dossier source "${srcFolder.name}" : ${e.message}`);
   }
 
   // ── Partitionner : à copier vs doublons connus
@@ -170,17 +192,17 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
   for (const m of srcMsgs) {
     if (m.headerMessageId && dstIndex.has(m.headerMessageId)) {
       progress.duplicates.push({
-        id             : m.id,
-        subject        : m.subject || "(sans objet)",
-        date           : m.date,
-        headerMessageId: m.headerMessageId,
-        srcFolder      : srcFolder.name,
-        dstFolderId    : dstId,
+        id: m.id, subject: m.subject || "(sans objet)",
+        date: m.date, headerMessageId: m.headerMessageId,
+        srcFolder: srcFolder.name, dstFolderId: dstId,
       });
     } else {
       toCopy.push(m);
     }
   }
+
+  const dupeCount = srcMsgs.length - toCopy.length;
+  log("info", `📁 "${srcFolder.name}" — ${toCopy.length} à copier${dupeCount ? `, ${dupeCount} doublon(s) ignoré(s)` : ""}`);
 
   progress.total += toCopy.length;
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: srcFolder.name });
@@ -192,23 +214,26 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 
     for (const m of batch) {
       if (state.cancel) return;
+      const subj = (m.subject || "(sans objet)").substring(0, 60);
       try {
         await withRetry(
           () => messenger.messages.copy([m.id], dstId),
           `copy-${m.id}`
         );
         progress.done++;
+        log("ok", `✓ [${progress.done}/${progress.total}] ${subj}`);
       } catch(e) {
-        const msg = (e.message || "").toLowerCase();
-        if (msg.includes("already contains")) {
-          // Doublon détecté au moment de la copie (pas dans l'index initial)
+        const errMsg = (e.message || "").toLowerCase();
+        if (errMsg.includes("already contains")) {
           progress.duplicates.push({
             id: m.id, subject: m.subject || "(sans objet)",
             date: m.date, headerMessageId: m.headerMessageId,
             srcFolder: srcFolder.name, dstFolderId: dstId,
           });
+          log("warn", `↩ Doublon : ${subj}`);
         } else {
           progress.errors.push({ subject: m.subject || "(sans objet)", reason: e.message });
+          log("error", `✗ Erreur : ${subj} — ${e.message}`);
         }
       }
       await sleep(CFG.MSG_DELAY);
@@ -216,6 +241,10 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 
     broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: srcFolder.name });
     await sleep(CFG.BATCH_DELAY);
+  }
+
+  if (toCopy.length > 0) {
+    log("ok", `✅ "${srcFolder.name}" terminé : ${toCopy.length} message(s) traité(s)`);
   }
 
   // ── Récursion sous-dossiers
@@ -230,6 +259,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
       const dstSub = await ensureSubFolder(dstId, sub.name);
       await copyFolderRecursive(sub, dstSub, progress);
     } catch(e) {
+      log("error", `✗ Sous-dossier "${sub.name}" : ${e.message}`);
       progress.errors.push({ subject: `[Dossier] ${sub.name}`, reason: e.message });
     }
   }
@@ -242,7 +272,11 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal") {
   state.running = true;
   state.cancel  = false;
+  logLines.length = 0; // Réinitialiser le journal
   applySpeedProfile(speedProfile);
+
+  const p = SPEED_PROFILES[speedProfile] ?? SPEED_PROFILES.normal;
+  log("info", `🚀 Migration démarrée — profil : ${speedProfile} (batch ${p.batchSize} msgs, ${p.batchDelay}ms entre batchs)`);
 
   const progress = { done: 0, total: 0, duplicates: [], errors: [] };
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: "" });
@@ -310,6 +344,12 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal") {
   }
 
   state.running = false;
+
+  if (state.cancel) {
+    log("warn", `⛔ Migration annulée par l'utilisateur — ${progress.done} message(s) déjà copiés`);
+  } else {
+    log("ok", `🏁 Migration terminée — ${progress.done} copiés · ${progress.duplicates.length} doublons · ${progress.errors.length} erreurs`);
+  }
 
   broadcast({
     type      : "COPY_DONE",
@@ -421,6 +461,7 @@ messenger.runtime.onMessage.addListener(async (req) => {
       }
 
       case "clearMigState":
+        logLines.length = 0;
         await messenger.storage.local.remove(STATE_KEY);
         return { ok: true };
 

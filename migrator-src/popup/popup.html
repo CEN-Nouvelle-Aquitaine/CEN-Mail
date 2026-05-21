@@ -286,7 +286,7 @@
     <div class="hdr-sub">Migration dossiers locaux → Outlook · dates préservées</div>
   </div>
   <span id="hdr-running" style="display:none;background:#e07c3a;border-radius:99px;padding:2px 9px;font-size:10px;font-family:monospace;animation:pulse 1.2s ease-in-out infinite;">⏳ En cours</span>
-  <span class="hdr-badge">v1.3.0</span>
+  <span class="hdr-badge">v1.4.0</span>
 </div>
 
 <!-- ═══════ ÉTAPE 1 : SÉLECTION ═══════ -->
@@ -363,6 +363,24 @@
   </div>
 
   <button class="btn btn-danger btn-full" id="btn-cancel">✕ Annuler la copie</button>
+
+  <details id="log-details" style="margin-top:12px;" open>
+    <summary style="cursor:pointer;font-size:11.5px;font-weight:600;color:var(--text-2);
+                    padding:6px 0;user-select:none;list-style:none;display:flex;align-items:center;gap:6px;">
+      <span id="log-toggle-ico">▼</span> Journal détaillé
+      <span style="margin-left:auto;">
+        <button class="btn btn-ghost btn-sm" id="btn-log-clear" style="font-size:10.5px;padding:2px 7px;">
+          Effacer
+        </button>
+      </span>
+    </summary>
+    <div id="log-panel" style="
+      margin-top:6px; max-height:180px; overflow-y:auto;
+      background:#0e1a0e; border-radius:var(--radius);
+      padding:8px 10px; font-family:monospace; font-size:11px;
+      line-height:1.6; color:#b8d4b8;
+    "></div>
+  </details>
 </div>
 
 <!-- ═══════ ÉTAPE 3 : RÉSULTATS ═══════ -->
@@ -423,6 +441,19 @@
   </div>
 
   <div class="status" id="res-status"></div>
+
+  <details style="margin-top:10px;">
+    <summary style="cursor:pointer;font-size:11.5px;font-weight:600;color:var(--text-2);
+                    padding:6px 0;user-select:none;list-style:none;">
+      ▶ Journal de la migration
+    </summary>
+    <div id="log-panel-res" style="
+      margin-top:6px; max-height:200px; overflow-y:auto;
+      background:#0e1a0e; border-radius:var(--radius);
+      padding:8px 10px; font-family:monospace; font-size:11px;
+      line-height:1.6; color:#b8d4b8;
+    "></div>
+  </details>
 
   <hr>
   <button class="btn btn-ghost btn-full" id="btn-restart">↩ Nouvelle migration</button>
