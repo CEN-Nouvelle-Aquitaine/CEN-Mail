@@ -1,15 +1,15 @@
 /**
- * Mail-Migrator CEN — background.js v1.0.0
- * Copie dossiers locaux → Outlook en préservant les dates (INTERNALDATE IMAP).
+ * Mail-Migrator CEN — background.js v1.1.0
  *
- * Correction clé par rapport à l'ancienne version :
- *   messages.import(file, dstId, { date: message.date, … })
- *   Le champ `date` est transmis dans la commande IMAP APPEND comme INTERNALDATE,
- *   ce qui évite qu'Outlook affiche la date du transfert au lieu de la date d'envoi.
+ * Stratégie : messenger.messages.copy() uniquement.
+ * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
+ * que le glisser-déposer), ce qui garantit la préservation de la date
+ * originale (INTERNALDATE IMAP) — contrairement à messages.import() qui passe
+ * par un APPEND brut sans INTERNALDATE.
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.0.0");
+console.log("[Mail-Migrator CEN] Chargé v1.1.0");
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -19,15 +19,13 @@ const CFG = {
   BATCH_DELAY  : 1200,  // ms entre batchs
   MSG_DELAY    : 150,   // ms entre messages au sein d'un batch
   RETRY_MAX    : 3,
-  RETRY_BACKOFF: 2000,  // ms, multiplié par le numéro d'essai
-  TEMP_FOLDER  : "MigTemp-CEN",
+  RETRY_BACKOFF: 2000,  // ms (× numéro d'essai)
 };
 
 // ─────────────────────────────────────────────────────────────
 // ÉTAT
 // ─────────────────────────────────────────────────────────────
 const state = { running: false, cancel: false };
-let _tempFolder = null;
 
 // ─────────────────────────────────────────────────────────────
 // UTILITAIRES
@@ -41,7 +39,7 @@ function broadcast(msg) {
 
 function isPermErr(e) {
   const m = (e?.message || "").toLowerCase();
-  return ["already contains", "permission denied", "quota", "no such folder"].some(p => m.includes(p));
+  return ["permission denied", "quota", "no such folder", "already contains"].some(p => m.includes(p));
 }
 
 async function withRetry(fn, label = "op") {
@@ -62,7 +60,8 @@ async function withRetry(fn, label = "op") {
 }
 
 /**
- * Collecte tous les messages d'un dossier (gère la pagination TB 128+ et l'ancienne API).
+ * Collecte tous les messages d'un dossier.
+ * Gère l'async iterator (TB 128+) et l'ancienne API paginée.
  */
 async function getAllMessages(folderId) {
   const msgs = [];
@@ -77,126 +76,6 @@ async function getAllMessages(folderId) {
     } while (page?.messages?.length);
   }
   return msgs;
-}
-
-/**
- * Récupère le message en tant que File (octets bruts) sans décodage UTF-8.
- * Ne JAMAIS décoder en string puis ré-encoder — cela corrompt les caractères multi-octets.
- */
-async function getRawFile(messageId) {
-  const raw = await messenger.messages.getRaw(messageId);
-  if (raw instanceof Blob) {
-    return new File([raw], `${messageId}.eml`, { type: "message/rfc822" });
-  }
-  // Anciens TB : BinaryString (1 char = 1 octet)
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 0xff;
-  return new File([bytes], `${messageId}.eml`, { type: "message/rfc822" });
-}
-
-// ─────────────────────────────────────────────────────────────
-// DOSSIER TEMPORAIRE LOCAL
-// ─────────────────────────────────────────────────────────────
-
-async function getTempFolder() {
-  if (_tempFolder) {
-    // Vérifie que le dossier existe encore
-    try {
-      await messenger.folders.getSubFolders(_tempFolder.id, false);
-      return _tempFolder;
-    } catch { _tempFolder = null; }
-  }
-  const accounts = await messenger.accounts.list();
-  const local =
-    accounts.find(a => a.type === "none") ??
-    accounts.find(a => a.type === "local") ??
-    accounts[0];
-  if (!local) throw new Error("Aucun compte local disponible pour le dossier temporaire.");
-  const rootId = local.rootFolder?.id ?? local.rootFolder;
-  const subs = await messenger.folders.getSubFolders(rootId, false);
-  _tempFolder = subs.find(f => f.name === CFG.TEMP_FOLDER)
-    ?? await messenger.folders.create(rootId, CFG.TEMP_FOLDER);
-  return _tempFolder;
-}
-
-async function cleanTempFolder() {
-  if (!_tempFolder) return;
-  try {
-    const msgs = await getAllMessages(_tempFolder.id ?? _tempFolder);
-    if (!msgs.length) {
-      await messenger.folders.delete(_tempFolder.id ?? _tempFolder).catch(() => {});
-      _tempFolder = null;
-    }
-  } catch {}
-}
-
-// ─────────────────────────────────────────────────────────────
-// COPIE D'UN MESSAGE AVEC PRÉSERVATION DE DATE
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Copie un message vers dstFolderId en préservant la date originale.
- *
- * POURQUOI ça marchait pas avant :
- *   L'ancienne version appelait messages.import() sans le champ `date`.
- *   Résultat : l'IMAP APPEND ne transmettait pas d'INTERNALDATE → Outlook
- *   utilisait l'horodatage de réception comme date, pas la date du message.
- *
- * SOLUTION :
- *   Passer `date: message.date` dans les props d'import. TB 128+ inclut
- *   ce champ dans la commande IMAP APPEND → INTERNALDATE = date originale.
- */
-async function copyMessagePreservingDate(message, dstFolderId) {
-  const props = {
-    date   : message.date,        // ← LE FIX : INTERNALDATE IMAP = date originale
-    flagged: message.flagged,
-    read   : message.read,
-    tags   : message.tags ?? [],
-  };
-
-  let file;
-  try {
-    await withRetry(async () => { file = await getRawFile(message.id); }, "getRaw");
-  } catch(e) {
-    return { error: `Lecture du message impossible : ${e.message}` };
-  }
-
-  // ── Stratégie 1 : import direct vers IMAP (APPEND avec INTERNALDATE)
-  try {
-    await withRetry(async () => {
-      const msg = await messenger.messages.import(file, dstFolderId, props);
-      if (!msg) throw new Error("Import retourné null");
-    }, "import-direct");
-    return { ok: true, method: "direct" };
-  } catch(e) {
-    if ((e.message || "").toLowerCase().includes("already contains")) {
-      return { skipped: true, reason: "doublon" };
-    }
-    console.warn(`[Migrator] Import direct échoué (${e.message}), essai fallback temp…`);
-  }
-
-  // ── Stratégie 2 : import vers dossier local temp, puis déplacement IMAP
-  // Le move() TB préserve la date mieux que certains serveurs IMAP qui ignorent
-  // l'INTERNALDATE dans l'APPEND.
-  try {
-    const temp = await getTempFolder();
-    let localMsg;
-    await withRetry(async () => {
-      localMsg = await messenger.messages.import(file, temp.id ?? temp, props);
-      if (!localMsg) throw new Error("Import temp null");
-    }, "import-temp");
-
-    await withRetry(async () => {
-      await messenger.messages.move([localMsg.id], dstFolderId);
-    }, "move-from-temp");
-
-    return { ok: true, method: "temp+move" };
-  } catch(e) {
-    if ((e.message || "").toLowerCase().includes("already contains")) {
-      return { skipped: true, reason: "doublon" };
-    }
-    return { error: e.message };
-  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -231,12 +110,7 @@ async function ensureSubFolder(parentFolderId, name) {
 // ─────────────────────────────────────────────────────────────
 
 function snap(p) {
-  return {
-    done  : p.done,
-    total : p.total,
-    dupes : p.duplicates.length,
-    errors: p.errors.length,
-  };
+  return { done: p.done, total: p.total, dupes: p.duplicates.length, errors: p.errors.length };
 }
 
 async function copyFolderRecursive(srcFolder, dstFolder, progress) {
@@ -245,7 +119,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
   const srcId = srcFolder.id ?? srcFolder;
   const dstId = dstFolder.id ?? dstFolder;
 
-  // ── Index des Message-ID déjà présents en destination (détection doublons)
+  // ── Indexer les Message-ID déjà présents en destination (détection doublons)
   const dstIndex = new Set();
   try {
     const dstMsgs = await getAllMessages(dstId);
@@ -282,23 +156,31 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
   progress.total += toCopy.length;
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: srcFolder.name });
 
-  // ── Copie par batchs
+  // ── Copie par batchs via l'API native Thunderbird (même mécanisme que "Copier vers")
   for (let i = 0; i < toCopy.length; i += CFG.BATCH_SIZE) {
     if (state.cancel) return;
     const batch = toCopy.slice(i, i + CFG.BATCH_SIZE);
 
     for (const m of batch) {
       if (state.cancel) return;
-      const result = await copyMessagePreservingDate(m, dstId);
-      if (result.ok)      progress.done++;
-      else if (result.skipped) {
-        progress.duplicates.push({
-          id: m.id, subject: m.subject || "(sans objet)",
-          date: m.date, headerMessageId: m.headerMessageId,
-          srcFolder: srcFolder.name, dstFolderId: dstId,
-        });
-      } else {
-        progress.errors.push({ subject: m.subject || "(sans objet)", reason: result.error });
+      try {
+        await withRetry(
+          () => messenger.messages.copy([m.id], dstId),
+          `copy-${m.id}`
+        );
+        progress.done++;
+      } catch(e) {
+        const msg = (e.message || "").toLowerCase();
+        if (msg.includes("already contains")) {
+          // Doublon détecté au moment de la copie (pas dans l'index initial)
+          progress.duplicates.push({
+            id: m.id, subject: m.subject || "(sans objet)",
+            date: m.date, headerMessageId: m.headerMessageId,
+            srcFolder: srcFolder.name, dstFolderId: dstId,
+          });
+        } else {
+          progress.errors.push({ subject: m.subject || "(sans objet)", reason: e.message });
+        }
       }
       await sleep(CFG.MSG_DELAY);
     }
@@ -315,7 +197,6 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 
   for (const sub of subs) {
     if (state.cancel) return;
-    if (sub.name === CFG.TEMP_FOLDER) continue;
     try {
       const dstSub = await ensureSubFolder(dstId, sub.name);
       await copyFolderRecursive(sub, dstSub, progress);
@@ -332,7 +213,6 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 async function startCopy(srcFolderIds, dstFolderId) {
   state.running = true;
   state.cancel  = false;
-  _tempFolder   = null;
 
   const progress = { done: 0, total: 0, duplicates: [], errors: [] };
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: "" });
@@ -367,37 +247,22 @@ async function startCopy(srcFolderIds, dstFolderId) {
     return;
   }
 
-  // ── Dédupliquer srcFolderIds : retirer tout ID dont un ancêtre est aussi sélectionné
-  // Pour cela on vérifie si le parent immédiat du dossier figure dans la liste
-  const srcSet = new Set(srcFolderIds);
-
-  function hasSelectedAncestor(folderId) {
-    const f = folderCache[folderId];
-    if (!f) return false;
-    // Cherche si un dossier de la liste est parent de folderId
-    for (const candidateId of srcSet) {
-      if (candidateId === folderId) continue;
-      const candidate = folderCache[candidateId];
-      if (!candidate) continue;
-      // Vérifie si folderId est dans les sous-dossiers de candidate
-      if (isDescendantOf(folderId, candidateId, folderCache)) return true;
-    }
-    return false;
-  }
-
-  function isDescendantOf(childId, parentId, cache) {
-    const parent = cache[parentId];
+  // ── Dédupliquer : exclure les IDs dont un ancêtre est aussi sélectionné
+  function isDescendantOf(childId, parentId) {
+    const parent = folderCache[parentId];
     if (!parent?.subFolders?.length) return false;
     for (const sub of parent.subFolders) {
       if (sub.id === childId) return true;
-      if (isDescendantOf(childId, sub.id, cache)) return true;
+      if (isDescendantOf(childId, sub.id)) return true;
     }
     return false;
   }
 
-  const rootSrcIds = srcFolderIds.filter(id => !hasSelectedAncestor(id));
+  const rootSrcIds = srcFolderIds.filter(id =>
+    !srcFolderIds.some(otherId => otherId !== id && isDescendantOf(id, otherId))
+  );
 
-  // ── Copier chaque dossier racine sélectionné vers la destination
+  // ── Copier chaque dossier racine sélectionné
   for (const srcId of rootSrcIds) {
     if (state.cancel) break;
     const srcFolder = folderCache[srcId];
@@ -415,7 +280,6 @@ async function startCopy(srcFolderIds, dstFolderId) {
   }
 
   state.running = false;
-  await cleanTempFolder();
 
   broadcast({
     type      : "COPY_DONE",
@@ -439,16 +303,11 @@ async function forceCopyDuplicates(duplicates) {
   for (const dup of duplicates) {
     if (state.cancel) break;
     try {
-      const message = await messenger.messages.get(dup.id);
-      if (!message) throw new Error("Message introuvable (a-t-il été supprimé ?)");
-
-      const file = await getRawFile(dup.id);
-      await withRetry(() => messenger.messages.import(file, dup.dstFolderId, {
-        date   : message.date,   // préservation de date ici aussi
-        flagged: message.flagged,
-        read   : message.read,
-        tags   : message.tags ?? [],
-      }), "force-import");
+      // messenger.messages.copy() — même mécanisme natif, préserve la date
+      await withRetry(
+        () => messenger.messages.copy([dup.id], dup.dstFolderId),
+        "force-copy"
+      );
       done++;
     } catch(e) {
       errors.push({ subject: dup.subject, reason: e.message });
