@@ -14,7 +14,8 @@
     "accountsRead",
     "accountsFolders",
     "messagesRead",
-    "messagesMove"
+    "messagesMove",
+    "storage"
   ],
   "background": {
     "scripts": ["background.js"]
