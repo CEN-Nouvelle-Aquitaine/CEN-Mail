@@ -517,11 +517,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("prog-folder").textContent = "Initialisation de la copie…";
     $("btn-cancel").disabled = false;
 
+    const dateFromVal = $("date-from").value;
+    const dateToVal   = $("date-to").value;
+    const dateFrom = dateFromVal ? new Date(dateFromVal + "T00:00:00").getTime() : null;
+    const dateTo   = dateToVal   ? new Date(dateToVal   + "T23:59:59.999").getTime() : null;
+
     const r = await messenger.runtime.sendMessage({
       action      : "startCopy",
       srcFolderIds,
       dstFolderId : _dstFolderId,
       speedProfile: $("speed-select").value,
+      dateFrom,
+      dateTo,
     });
 
     if (r?.error) {

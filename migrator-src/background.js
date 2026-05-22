@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.4.0
+ * Mail-Migrator CEN — background.js v1.5.0
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.4.0");
+console.log("[Mail-Migrator CEN] Chargé v1.5.0");
 
 const STATE_KEY = "mig_state";
 
@@ -163,7 +163,7 @@ function snap(p) {
   return { done: p.done, total: p.total, dupes: p.duplicates.length, errors: p.errors.length };
 }
 
-async function copyFolderRecursive(srcFolder, dstFolder, progress) {
+async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = null) {
   if (state.cancel) return;
 
   const srcId = srcFolder.id ?? srcFolder;
@@ -185,6 +185,22 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
     srcMsgs = await getAllMessages(srcId);
   } catch(e) {
     log("error", `✗ Lecture dossier source "${srcFolder.name}" : ${e.message}`);
+  }
+
+  // ── Filtre par plage de dates (optionnel)
+  if (dateFilter && (dateFilter.from || dateFilter.to)) {
+    const before = srcMsgs.length;
+    srcMsgs = srcMsgs.filter(m => {
+      const ts = m.date ? new Date(m.date).getTime() : null;
+      if (ts === null) return true;
+      if (dateFilter.from && ts < dateFilter.from) return false;
+      if (dateFilter.to   && ts > dateFilter.to)   return false;
+      return true;
+    });
+    const excluded = before - srcMsgs.length;
+    if (excluded > 0) {
+      log("info", `🗓 "${srcFolder.name}" : ${excluded} message(s) hors plage ignoré(s) (${srcMsgs.length} dans la plage)`);
+    }
   }
 
   // ── Partitionner : à copier vs doublons connus
@@ -257,7 +273,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
     if (state.cancel) return;
     try {
       const dstSub = await ensureSubFolder(dstId, sub.name);
-      await copyFolderRecursive(sub, dstSub, progress);
+      await copyFolderRecursive(sub, dstSub, progress, dateFilter);
     } catch(e) {
       log("error", `✗ Sous-dossier "${sub.name}" : ${e.message}`);
       progress.errors.push({ subject: `[Dossier] ${sub.name}`, reason: e.message });
@@ -269,7 +285,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress) {
 // POINT D'ENTRÉE : DÉMARRER LA COPIE
 // ─────────────────────────────────────────────────────────────
 
-async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal") {
+async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dateFrom = null, dateTo = null) {
   state.running = true;
   state.cancel  = false;
   logLines.length = 0; // Réinitialiser le journal
@@ -277,6 +293,12 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal") {
 
   const p = SPEED_PROFILES[speedProfile] ?? SPEED_PROFILES.normal;
   log("info", `🚀 Migration démarrée — profil : ${speedProfile} (batch ${p.batchSize} msgs, ${p.batchDelay}ms entre batchs)`);
+
+  const dateFilter = (dateFrom || dateTo) ? { from: dateFrom, to: dateTo } : null;
+  if (dateFilter) {
+    const fmt = ts => ts ? new Date(ts).toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric" }) : "∞";
+    log("info", `🗓 Filtre de date actif : du ${fmt(dateFrom)} au ${fmt(dateTo)}`);
+  }
 
   const progress = { done: 0, total: 0, duplicates: [], errors: [] };
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: "" });
@@ -340,7 +362,7 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal") {
       continue;
     }
 
-    await copyFolderRecursive(srcFolder, dstSub, progress);
+    await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter);
   }
 
   state.running = false;
@@ -432,7 +454,7 @@ messenger.runtime.onMessage.addListener(async (req) => {
 
       case "startCopy": {
         if (state.running) return { error: "Une migration est déjà en cours." };
-        startCopy(req.srcFolderIds, req.dstFolderId, req.speedProfile).catch(e => {
+        startCopy(req.srcFolderIds, req.dstFolderId, req.speedProfile, req.dateFrom ?? null, req.dateTo ?? null).catch(e => {
           state.running = false;
           broadcast({ type: "COPY_ERROR", error: e.message });
         });
