@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.5.0
+ * Mail-Migrator CEN — background.js v1.6.0
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.5.0");
+console.log("[Mail-Migrator CEN] Chargé v1.6.0");
 
 const STATE_KEY = "mig_state";
 
@@ -418,8 +418,8 @@ async function forceCopyDuplicates(duplicates) {
 
 async function buildFolderTree() {
   const accounts = await messenger.accounts.list();
-  const local = [];
-  const imap  = [];
+  const source = [];
+  const imap   = [];
 
   for (const acc of accounts) {
     let folders = acc.folders ?? [];
@@ -431,14 +431,13 @@ async function buildFolderTree() {
       } catch {}
     }
     const entry = { id: acc.id, name: acc.name, type: acc.type, folders };
-    if (acc.type === "none" || acc.type === "local") {
-      local.push(entry);
-    } else if (acc.type === "imap" || acc.type === "pop3") {
+    source.push(entry);
+    if (acc.type === "imap" || acc.type === "pop3") {
       imap.push(entry);
     }
   }
 
-  return { local, imap };
+  return { source, imap };
 }
 
 // ─────────────────────────────────────────────────────────────

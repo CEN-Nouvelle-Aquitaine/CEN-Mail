@@ -31,6 +31,8 @@ function goStep(step) {
 
 let _duplicates    = [];   // liste complète des doublons reçus à la fin
 let _dstFolderId   = null; // dossier destination choisi pour la migration
+let _folderAccountMap = {}; // folderId → accountId (pour la détection conflit src/dst)
+let _sameAcctWarned   = false; // true si l'avertissement même compte a déjà été montré
 
 // ─────────────────────────────────────────────────────────────
 // JOURNAL
@@ -67,12 +69,20 @@ function populateLog(lines) {
 // ARBRE DE DOSSIERS LOCAUX
 // ─────────────────────────────────────────────────────────────
 
+const ACC_ICONS = {
+  none : "🖥",
+  local: "🖥",
+  imap : "☁",
+  pop3 : "☁",
+};
+
 /**
- * Construit un nœud HTML pour un dossier local.
- * @param {Object} folder  - dossier TB (id, name, subFolders)
- * @param {number} depth   - niveau d'indentation
+ * Construit un nœud HTML pour un dossier source.
+ * @param {Object} folder    - dossier TB (id, name, subFolders)
+ * @param {number} depth     - niveau d'indentation
+ * @param {string} accountId - ID du compte parent (pour détection conflit)
  */
-function buildFolderNode(folder, depth) {
+function buildFolderNode(folder, depth, accountId) {
   const hasSubs = Array.isArray(folder.subFolders) && folder.subFolders.length > 0;
   const indent  = depth * 18;
 
@@ -94,8 +104,9 @@ function buildFolderNode(folder, depth) {
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.className = "f-cb";
-  cb.dataset.id   = folder.id;
-  cb.dataset.name = folder.name;
+  cb.dataset.id        = folder.id;
+  cb.dataset.name      = folder.name;
+  cb.dataset.accountId = accountId || "";
 
   // Icône + nom
   const icon = document.createElement("span");
@@ -118,7 +129,7 @@ function buildFolderNode(folder, depth) {
     children.className = "f-children";
 
     for (const sub of folder.subFolders) {
-      children.appendChild(buildFolderNode(sub, depth + 1));
+      children.appendChild(buildFolderNode(sub, depth + 1, accountId));
     }
     node.appendChild(children);
 
@@ -147,20 +158,22 @@ function buildFolderNode(folder, depth) {
   return node;
 }
 
-function renderLocalTree(localAccounts) {
+function renderSourceTree(sourceAccounts) {
   const container = $("local-tree");
   container.innerHTML = "";
 
-  if (!localAccounts || localAccounts.length === 0) {
-    container.innerHTML = `<div class="tree-empty">Aucun dossier local trouvé.</div>`;
+  if (!sourceAccounts || sourceAccounts.length === 0) {
+    container.innerHTML = `<div class="tree-empty">Aucun dossier trouvé.</div>`;
     return;
   }
 
-  for (const acc of localAccounts) {
+  for (const acc of sourceAccounts) {
+    const icon = ACC_ICONS[acc.type] ?? "📬";
+
     // En-tête de compte
     const accHdr = document.createElement("div");
     accHdr.className = "acc-hdr";
-    accHdr.innerHTML = `<span>🖥</span> ${escHtml(acc.name)}`;
+    accHdr.innerHTML = `<span>${icon}</span> ${escHtml(acc.name)}`;
     container.appendChild(accHdr);
 
     if (!acc.folders || acc.folders.length === 0) {
@@ -172,7 +185,7 @@ function renderLocalTree(localAccounts) {
     }
 
     for (const folder of acc.folders) {
-      container.appendChild(buildFolderNode(folder, 0));
+      container.appendChild(buildFolderNode(folder, 0, acc.id));
     }
   }
 }
@@ -182,6 +195,7 @@ function renderLocalTree(localAccounts) {
 // ─────────────────────────────────────────────────────────────
 
 function renderImapFolders(imapAccounts) {
+  _folderAccountMap = {};
   const select = $("dst-select");
   select.innerHTML = `<option value="">— Choisir un dossier de destination Outlook —</option>`;
 
@@ -190,20 +204,21 @@ function renderImapFolders(imapAccounts) {
     return;
   }
 
-  function addOptions(parent, folders, depth) {
+  function addOptions(parent, folders, depth, accountId) {
     for (const f of folders) {
+      _folderAccountMap[f.id] = accountId;
       const opt = document.createElement("option");
       opt.value       = f.id;
       opt.textContent = "  ".repeat(depth) + f.name;
       parent.appendChild(opt);
-      if (f.subFolders?.length) addOptions(parent, f.subFolders, depth + 1);
+      if (f.subFolders?.length) addOptions(parent, f.subFolders, depth + 1, accountId);
     }
   }
 
   for (const acc of imapAccounts) {
     const grp = document.createElement("optgroup");
     grp.label = acc.name;
-    addOptions(grp, acc.folders ?? [], 0);
+    addOptions(grp, acc.folders ?? [], 0, acc.id);
     select.appendChild(grp);
   }
 }
@@ -404,7 +419,7 @@ async function loadFolderTree() {
     return;
   }
 
-  renderLocalTree(r.local);
+  renderSourceTree(r.source);
   renderImapFolders(r.imap);
 }
 
@@ -504,13 +519,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     _dstFolderId = $("dst-select").value;
 
     if (!srcFolderIds.length) {
+      _sameAcctWarned = false;
       setStatus("setup-status", "warning", "Sélectionnez au moins un dossier source.");
       return;
     }
     if (!_dstFolderId) {
+      _sameAcctWarned = false;
       setStatus("setup-status", "warning", "Choisissez un dossier de destination Outlook.");
       return;
     }
+
+    // ── Avertissement : source et destination sur le même compte IMAP
+    if (!_sameAcctWarned) {
+      const dstAccId = _folderAccountMap[_dstFolderId];
+      const srcAccIds = new Set(
+        [...document.querySelectorAll(".f-cb:checked")]
+          .map(cb => cb.dataset.accountId).filter(Boolean)
+      );
+      if (dstAccId && srcAccIds.has(dstAccId)) {
+        _sameAcctWarned = true;
+        setStatus("setup-status", "warning",
+          "⚠ Des dossiers sources appartiennent au même compte que la destination. " +
+          "Cela peut créer des doublons. <b>Cliquez à nouveau sur Démarrer pour confirmer.</b>");
+        return;
+      }
+    }
+    _sameAcctWarned = false;
 
     setStatus("setup-status", "", "");
     goStep("step-progress");
