@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.0
+ * Mail-Migrator CEN — background.js v1.6.2
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.1");
+console.log("[Mail-Migrator CEN] Chargé v1.6.2");
 
 const STATE_KEY = "mig_state";
 
@@ -26,6 +26,7 @@ const SPEED_PROFILES = {
   normal  : { batchSize:  5, batchDelay: 1500, msgDelay: 200 },
   prudent : { batchSize:  3, batchDelay: 3000, msgDelay: 500 },
   lent    : { batchSize:  1, batchDelay: 5000, msgDelay: 800 },
+  ultra   : { batchSize:  1, batchDelay: 8000, msgDelay: 2000 },
 };
 
 // Profil actif (modifié au démarrage de chaque copie)
@@ -140,6 +141,8 @@ async function ensureSubFolder(parentFolderId, name) {
       () => messenger.folders.create(parentFolderId, name),
       `create-folder-${name}`
     );
+    // M365 IMAP a besoin d'un délai après création avant d'accepter des COPY/APPEND
+    await sleep(3000);
     log("ok", `✓ Dossier créé : ${name}`);
     return created;
   } catch(e) {

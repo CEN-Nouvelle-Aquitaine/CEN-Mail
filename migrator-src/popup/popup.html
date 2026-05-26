@@ -286,7 +286,7 @@
     <div class="hdr-sub">Migration dossiers locaux → Outlook · dates préservées</div>
   </div>
   <span id="hdr-running" style="display:none;background:#e07c3a;border-radius:99px;padding:2px 9px;font-size:10px;font-family:monospace;animation:pulse 1.2s ease-in-out infinite;">⏳ En cours</span>
-  <span class="hdr-badge">v1.6.0</span>
+  <span class="hdr-badge">v1.6.2</span>
 </div>
 
 <!-- ═══════ ÉTAPE 1 : SÉLECTION ═══════ -->
@@ -351,6 +351,7 @@
       <option value="normal" selected>Normal — batch 5 msgs, 1,5 s entre batchs</option>
       <option value="prudent">Prudent — batch 3 msgs, 3 s entre batchs</option>
       <option value="lent">Lent — message par message, 5 s entre chaque</option>
+      <option value="ultra">Ultra-lent — message par message, 8 s + 2 s entre msgs (M365 throttling)</option>
     </select>
     <div style="font-size:11px;color:var(--text-3);margin-top:4px;">
       Si Outlook renvoie des erreurs de connexion, choisissez un profil plus lent.
