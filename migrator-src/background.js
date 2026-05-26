@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.2
+ * Mail-Migrator CEN — background.js v1.6.3
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.2");
+console.log("[Mail-Migrator CEN] Chargé v1.6.3");
 
 const STATE_KEY = "mig_state";
 
@@ -89,6 +89,11 @@ function isPermErr(e) {
   return ["permission denied", "quota", "no such folder", "already contains"].some(p => m.includes(p));
 }
 
+function isM365ThrottleErr(e) {
+  const m = e?.message || "";
+  return m.includes("2153054241") || m.includes("0x80550021");
+}
+
 async function withRetry(fn, label = "op") {
   let last;
   for (let i = 1; i <= CFG.RETRY_MAX; i++) {
@@ -135,15 +140,12 @@ async function ensureSubFolder(parentFolderId, name) {
   const existing = subs.find(f => f.name === name);
   if (existing) return existing;
 
-  log("info", `📂 Création dossier : ${name}`);
+  log("info", `📂 Création : ${name}`);
   try {
     const created = await withRetry(
       () => messenger.folders.create(parentFolderId, name),
       `create-folder-${name}`
     );
-    // M365 IMAP a besoin d'un délai après création avant d'accepter des COPY/APPEND
-    await sleep(3000);
-    log("ok", `✓ Dossier créé : ${name}`);
     return created;
   } catch(e) {
     // Outlook IMAP : parfois la création réussit mais lève quand même une erreur
@@ -151,9 +153,9 @@ async function ensureSubFolder(parentFolderId, name) {
     try {
       const subs2 = await messenger.folders.getSubFolders(parentFolderId, false);
       const found = subs2.find(f => f.name === name);
-      if (found) { log("warn", `⚠ Dossier ${name} : erreur à la création mais dossier existant trouvé`); return found; }
+      if (found) { log("warn", `⚠ ${name} : erreur création mais dossier trouvé`); return found; }
     } catch {}
-    log("error", `✗ Impossible de créer le dossier ${name} : ${e.message}`);
+    log("error", `✗ Impossible de créer ${name} : ${e.message}`);
     throw e;
   }
 }
@@ -166,7 +168,7 @@ function snap(p) {
   return { done: p.done, total: p.total, dupes: p.duplicates.length, errors: p.errors.length };
 }
 
-async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = null) {
+async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, folderMap) {
   if (state.cancel) return;
 
   const srcId = srcFolder.id ?? srcFolder;
@@ -177,7 +179,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
   try {
     const dstMsgs = await getAllMessages(dstId);
     for (const m of dstMsgs) if (m.headerMessageId) dstIndex.add(m.headerMessageId);
-    if (dstMsgs.length) log("info", `🔍 Index destination "${dstFolder.name}" : ${dstMsgs.length} message(s) existant(s)`);
+    if (dstMsgs.length) log("info", `🔍 "${dstFolder.name}" : ${dstMsgs.length} message(s) déjà présent(s)`);
   } catch(e) {
     log("warn", `⚠ Impossible d'indexer "${dstFolder.name}" : ${e.message}`);
   }
@@ -187,7 +189,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
   try {
     srcMsgs = await getAllMessages(srcId);
   } catch(e) {
-    log("error", `✗ Lecture dossier source "${srcFolder.name}" : ${e.message}`);
+    log("error", `✗ Lecture source "${srcFolder.name}" : ${e.message}`);
   }
 
   // ── Filtre par plage de dates (optionnel)
@@ -202,7 +204,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
     });
     const excluded = before - srcMsgs.length;
     if (excluded > 0) {
-      log("info", `🗓 "${srcFolder.name}" : ${excluded} message(s) hors plage ignoré(s) (${srcMsgs.length} dans la plage)`);
+      log("info", `🗓 "${srcFolder.name}" : ${excluded} hors plage ignoré(s) (${srcMsgs.length} dans la plage)`);
     }
   }
 
@@ -226,7 +228,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
   progress.total += toCopy.length;
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: srcFolder.name });
 
-  // ── Copie par batchs via l'API native Thunderbird (même mécanisme que "Copier vers")
+  // ── Copie par batchs
   for (let i = 0; i < toCopy.length; i += CFG.BATCH_SIZE) {
     if (state.cancel) return;
     const batch = toCopy.slice(i, i + CFG.BATCH_SIZE);
@@ -250,6 +252,18 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
             srcFolder: srcFolder.name, dstFolderId: dstId,
           });
           log("warn", `↩ Doublon : ${subj}`);
+        } else if (isM365ThrottleErr(e)) {
+          // M365 throttling : une dernière tentative après pause longue
+          log("warn", `⏳ Throttling M365 sur "${subj}", attente 10 s…`);
+          await sleep(10000);
+          try {
+            await messenger.messages.copy([m.id], dstId);
+            progress.done++;
+            log("ok", `✓ [${progress.done}/${progress.total}] ${subj} (retry M365)`);
+          } catch(e2) {
+            progress.errors.push({ subject: m.subject || "(sans objet)", reason: e2.message });
+            log("error", `✗ Erreur : ${subj} — ${e2.message}`);
+          }
         } else {
           progress.errors.push({ subject: m.subject || "(sans objet)", reason: e.message });
           log("error", `✗ Erreur : ${subj} — ${e.message}`);
@@ -263,10 +277,10 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
   }
 
   if (toCopy.length > 0) {
-    log("ok", `✅ "${srcFolder.name}" terminé : ${toCopy.length} message(s) traité(s)`);
+    log("ok", `✅ "${srcFolder.name}" terminé : ${toCopy.length} traité(s)`);
   }
 
-  // ── Récursion sous-dossiers
+  // ── Récursion sous-dossiers (via la map pré-construite)
   let subs = srcFolder.subFolders ?? [];
   if (!subs.length) {
     try { subs = await messenger.folders.getSubFolders(srcId, false); } catch {}
@@ -274,14 +288,60 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter = 
 
   for (const sub of subs) {
     if (state.cancel) return;
+    const dstSub = folderMap.get(sub.id);
+    if (!dstSub) {
+      log("warn", `⚠ Dossier destination manquant pour "${sub.name}", ignoré`);
+      continue;
+    }
     try {
-      const dstSub = await ensureSubFolder(dstId, sub.name);
-      await copyFolderRecursive(sub, dstSub, progress, dateFilter);
+      await copyFolderRecursive(sub, dstSub, progress, dateFilter, folderMap);
     } catch(e) {
       log("error", `✗ Sous-dossier "${sub.name}" : ${e.message}`);
       progress.errors.push({ subject: `[Dossier] ${sub.name}`, reason: e.message });
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PHASE 1 : PRÉ-CRÉATION DE TOUS LES DOSSIERS DESTINATION
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Parcourt récursivement les dossiers source et crée tous les dossiers
+ * destination en une seule passe, AVANT de copier quoi que ce soit.
+ * Retourne une Map : srcFolderId → dstFolderObject
+ */
+async function buildDestFolderMap(srcRootFolders, dstFolderId) {
+  const map = new Map();
+  let created = 0;
+
+  async function recurse(srcFolder, dstParentId) {
+    if (state.cancel) return;
+    let dstFolder;
+    try {
+      dstFolder = await ensureSubFolder(dstParentId, srcFolder.name);
+    } catch(e) {
+      log("error", `✗ Impossible de créer "${srcFolder.name}" : ${e.message}`);
+      return;
+    }
+    map.set(srcFolder.id, dstFolder);
+    created++;
+
+    let subs = srcFolder.subFolders ?? [];
+    if (!subs.length) {
+      try { subs = await messenger.folders.getSubFolders(srcFolder.id, false); } catch {}
+    }
+    for (const sub of subs) {
+      if (state.cancel) return;
+      await recurse(sub, dstFolder.id);
+    }
+  }
+
+  for (const srcFolder of srcRootFolders) {
+    await recurse(srcFolder, dstFolderId);
+  }
+
+  return { map, created };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -351,21 +411,33 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
     !srcFolderIds.some(otherId => otherId !== id && isDescendantOf(id, otherId))
   );
 
-  // ── Copier chaque dossier racine sélectionné
-  for (const srcId of rootSrcIds) {
-    if (state.cancel) break;
-    const srcFolder = folderCache[srcId];
-    if (!srcFolder) continue;
+  const rootSrcFolders = rootSrcIds.map(id => folderCache[id]).filter(Boolean);
 
-    let dstSub;
-    try {
-      dstSub = await ensureSubFolder(dstFolderId, srcFolder.name);
-    } catch(e) {
-      progress.errors.push({ subject: `[Dossier] ${srcFolder.name}`, reason: e.message });
+  // ── Phase 1 : créer tous les dossiers destination en une seule passe
+  log("info", `📂 Phase 1 — création de l'arborescence destination (${rootSrcFolders.length} dossier(s) racine)…`);
+  const { map: folderMap, created: foldersCreated } = await buildDestFolderMap(rootSrcFolders, dstFolderId);
+
+  if (state.cancel) {
+    state.running = false;
+    log("warn", "⛔ Annulé pendant la création des dossiers.");
+    broadcast({ type: "COPY_DONE", done: 0, total: 0, duplicates: [], errors: [], status: "cancelled" });
+    return;
+  }
+
+  log("ok", `✓ ${foldersCreated} dossier(s) prêt(s). Attente 15 s pour que M365 les enregistre…`);
+  await sleep(15000);
+  log("ok", "✅ Dossiers enregistrés — démarrage de la copie des messages.");
+
+  // ── Phase 2 : copier les messages dossier par dossier
+  log("info", "📨 Phase 2 — copie des messages…");
+  for (const srcFolder of rootSrcFolders) {
+    if (state.cancel) break;
+    const dstSub = folderMap.get(srcFolder.id);
+    if (!dstSub) {
+      progress.errors.push({ subject: `[Dossier] ${srcFolder.name}`, reason: "Dossier destination non créé" });
       continue;
     }
-
-    await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter);
+    await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter, folderMap);
   }
 
   state.running = false;
