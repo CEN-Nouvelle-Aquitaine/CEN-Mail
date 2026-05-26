@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.0");
+console.log("[Mail-Migrator CEN] Chargé v1.6.1");
 
 const STATE_KEY = "mig_state";
 
@@ -79,7 +79,7 @@ function broadcast(msg) {
   const payload = PERSIST_TYPES.has(msg.type) ? { ...msg, log: [...logLines] } : msg;
   messenger.runtime.sendMessage(payload).catch(() => {});
   if (PERSIST_TYPES.has(msg.type)) {
-    messenger.storage.local.set({ [STATE_KEY]: { ...payload, ts: Date.now() } });
+    browser.storage.local.set({ [STATE_KEY]: { ...payload, ts: Date.now() } });
   }
 }
 
@@ -477,13 +477,13 @@ messenger.runtime.onMessage.addListener(async (req) => {
         return { running: state.running };
 
       case "getMigState": {
-        const s = await messenger.storage.local.get(STATE_KEY);
+        const s = await browser.storage.local.get(STATE_KEY);
         return s[STATE_KEY] ?? null;
       }
 
       case "clearMigState":
         logLines.length = 0;
-        await messenger.storage.local.remove(STATE_KEY);
+        await browser.storage.local.remove(STATE_KEY);
         return { ok: true };
 
       default:
