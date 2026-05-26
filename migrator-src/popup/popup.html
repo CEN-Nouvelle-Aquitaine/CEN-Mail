@@ -286,7 +286,7 @@
     <div class="hdr-sub">Migration dossiers locaux → Outlook · dates préservées</div>
   </div>
   <span id="hdr-running" style="display:none;background:#e07c3a;border-radius:99px;padding:2px 9px;font-size:10px;font-family:monospace;animation:pulse 1.2s ease-in-out infinite;">⏳ En cours</span>
-  <span class="hdr-badge">v1.6.3</span>
+  <span class="hdr-badge">v1.6.4</span>
 </div>
 
 <!-- ═══════ ÉTAPE 1 : SÉLECTION ═══════ -->
@@ -347,11 +347,11 @@
   <div class="form-row" style="margin-top:4px;">
     <label class="form-label">⏱ Temporisation IMAP</label>
     <select id="speed-select">
-      <option value="rapide">Rapide — batch 10 msgs, 600 ms entre batchs</option>
-      <option value="normal" selected>Normal — batch 5 msgs, 1,5 s entre batchs</option>
-      <option value="prudent">Prudent — batch 3 msgs, 3 s entre batchs</option>
-      <option value="lent">Lent — message par message, 5 s entre chaque</option>
-      <option value="ultra">Ultra-lent — message par message, 8 s + 2 s entre msgs (M365 throttling)</option>
+      <option value="rapide">Rapide — ~3 200 msgs/h (limite M365, risque throttling)</option>
+      <option value="normal" selected>Normal — ~2 400 msgs/h (recommandé M365)</option>
+      <option value="prudent">Prudent — ~1 300 msgs/h (sûr, boîtes chargées)</option>
+      <option value="lent">Lent — ~500 msgs/h (très fiable)</option>
+      <option value="ultra">Ultra-lent — ~300 msgs/h (throttling sévère / gros volumes)</option>
     </select>
     <div style="font-size:11px;color:var(--text-3);margin-top:4px;">
       Si Outlook renvoie des erreurs de connexion, choisissez un profil plus lent.

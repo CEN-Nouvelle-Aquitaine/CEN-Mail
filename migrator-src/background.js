@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.3
+ * Mail-Migrator CEN — background.js v1.6.4
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.3");
+console.log("[Mail-Migrator CEN] Chargé v1.6.4");
 
 const STATE_KEY = "mig_state";
 
@@ -21,12 +21,14 @@ const STATE_KEY = "mig_state";
 // ─────────────────────────────────────────────────────────────
 
 // Profils de temporisation — l'UI transmet le nom du profil choisi
+// Calcul débit : (batchSize * msgDelay + batchDelay) / batchSize = ms/msg
+// M365 limite à ~3 600 msgs/heure = 1 msg/sec maximum
 const SPEED_PROFILES = {
-  rapide  : { batchSize: 10, batchDelay:  600, msgDelay:  80 },
-  normal  : { batchSize:  5, batchDelay: 1500, msgDelay: 200 },
-  prudent : { batchSize:  3, batchDelay: 3000, msgDelay: 500 },
-  lent    : { batchSize:  1, batchDelay: 5000, msgDelay: 800 },
-  ultra   : { batchSize:  1, batchDelay: 8000, msgDelay: 2000 },
+  rapide  : { batchSize: 5, batchDelay: 3000, msgDelay:  500 }, // ~0.9/sec → ~3 200/h (limite M365)
+  normal  : { batchSize: 3, batchDelay: 3000, msgDelay:  500 }, // ~0.67/sec → ~2 400/h
+  prudent : { batchSize: 2, batchDelay: 4000, msgDelay:  800 }, // ~0.36/sec → ~1 300/h
+  lent    : { batchSize: 1, batchDelay: 6000, msgDelay: 1000 }, // ~0.14/sec → ~500/h
+  ultra   : { batchSize: 1, batchDelay:10000, msgDelay: 2000 }, // ~0.08/sec → ~300/h
 };
 
 // Profil actif (modifié au démarrage de chaque copie)
@@ -253,16 +255,31 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
           });
           log("warn", `↩ Doublon : ${subj}`);
         } else if (isM365ThrottleErr(e)) {
-          // M365 throttling : une dernière tentative après pause longue
-          log("warn", `⏳ Throttling M365 sur "${subj}", attente 10 s…`);
-          await sleep(10000);
-          try {
-            await messenger.messages.copy([m.id], dstId);
-            progress.done++;
-            log("ok", `✓ [${progress.done}/${progress.total}] ${subj} (retry M365)`);
-          } catch(e2) {
-            progress.errors.push({ subject: m.subject || "(sans objet)", reason: e2.message });
-            log("error", `✗ Erreur : ${subj} — ${e2.message}`);
+          // Throttling M365 : backoff progressif 30 s → 60 s → 120 s
+          let copied = false;
+          for (const wait of [30000, 60000, 120000]) {
+            log("warn", `⏳ Throttling M365 sur "${subj}", attente ${wait / 1000} s…`);
+            await sleep(wait);
+            if (state.cancel) break;
+            try {
+              await messenger.messages.copy([m.id], dstId);
+              progress.done++;
+              log("ok", `✓ [${progress.done}/${progress.total}] ${subj}`);
+              copied = true;
+              break;
+            } catch(e2) {
+              if (!isM365ThrottleErr(e2)) {
+                progress.errors.push({ subject: m.subject || "(sans objet)", reason: e2.message });
+                log("error", `✗ Erreur : ${subj} — ${e2.message}`);
+                copied = true; // stopper la boucle
+                break;
+              }
+              // encore du throttling → tentative suivante
+            }
+          }
+          if (!copied && !state.cancel) {
+            progress.errors.push({ subject: m.subject || "(sans objet)", reason: "Throttling M365 persistant (3 tentatives épuisées)" });
+            log("error", `✗ Throttling persistant après 3 tentatives : ${subj}`);
           }
         } else {
           progress.errors.push({ subject: m.subject || "(sans objet)", reason: e.message });
