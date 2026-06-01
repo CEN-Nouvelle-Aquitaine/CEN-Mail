@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.4
+ * Mail-Migrator CEN — background.js v1.6.5
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.4");
+console.log("[Mail-Migrator CEN] Chargé v1.6.5");
 
 const STATE_KEY = "mig_state";
 
@@ -23,29 +23,32 @@ const STATE_KEY = "mig_state";
 // Profils de temporisation — l'UI transmet le nom du profil choisi
 // Calcul débit : (batchSize * msgDelay + batchDelay) / batchSize = ms/msg
 // M365 limite à ~3 600 msgs/heure = 1 msg/sec maximum
+// copyTimeout : délai max avant d'abandonner une copie bloquée (ms)
 const SPEED_PROFILES = {
-  rapide  : { batchSize: 5, batchDelay: 3000, msgDelay:  500 }, // ~0.9/sec → ~3 200/h (limite M365)
-  normal  : { batchSize: 3, batchDelay: 3000, msgDelay:  500 }, // ~0.67/sec → ~2 400/h
-  prudent : { batchSize: 2, batchDelay: 4000, msgDelay:  800 }, // ~0.36/sec → ~1 300/h
-  lent    : { batchSize: 1, batchDelay: 6000, msgDelay: 1000 }, // ~0.14/sec → ~500/h
-  ultra   : { batchSize: 1, batchDelay:10000, msgDelay: 2000 }, // ~0.08/sec → ~300/h
+  rapide  : { batchSize: 5, batchDelay: 3000, msgDelay:  500, copyTimeout:  45000 }, // ~3 200/h
+  normal  : { batchSize: 3, batchDelay: 3000, msgDelay:  500, copyTimeout:  60000 }, // ~2 400/h
+  prudent : { batchSize: 2, batchDelay: 4000, msgDelay:  800, copyTimeout:  90000 }, // ~1 300/h
+  lent    : { batchSize: 1, batchDelay: 6000, msgDelay: 1000, copyTimeout: 120000 }, // ~500/h
+  ultra   : { batchSize: 1, batchDelay:10000, msgDelay: 2000, copyTimeout: 180000 }, // ~300/h
 };
 
 // Profil actif (modifié au démarrage de chaque copie)
 let CFG = {
-  BATCH_SIZE   : 5,
-  BATCH_DELAY  : 1500,
-  MSG_DELAY    : 200,
+  BATCH_SIZE   : 3,
+  BATCH_DELAY  : 3000,
+  MSG_DELAY    : 500,
+  COPY_TIMEOUT : 60000,
   RETRY_MAX    : 3,
   RETRY_BACKOFF: 2000,
 };
 
 function applySpeedProfile(profileName) {
   const p = SPEED_PROFILES[profileName] ?? SPEED_PROFILES.normal;
-  CFG.BATCH_SIZE  = p.batchSize;
-  CFG.BATCH_DELAY = p.batchDelay;
-  CFG.MSG_DELAY   = p.msgDelay;
-  console.log(`[Migrator] Profil de vitesse : ${profileName} — batch=${p.batchSize}, batchDelay=${p.batchDelay}ms, msgDelay=${p.msgDelay}ms`);
+  CFG.BATCH_SIZE   = p.batchSize;
+  CFG.BATCH_DELAY  = p.batchDelay;
+  CFG.MSG_DELAY    = p.msgDelay;
+  CFG.COPY_TIMEOUT = p.copyTimeout;
+  console.log(`[Migrator] Profil de vitesse : ${profileName} — batch=${p.batchSize}, batchDelay=${p.batchDelay}ms, timeout=${p.copyTimeout/1000}s`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -62,6 +65,20 @@ const logLines = [];
 // ─────────────────────────────────────────────────────────────
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Enveloppe une promesse avec un timeout.
+ * Si la promesse ne se résout pas dans `ms` millisecondes, rejette avec
+ * une erreur explicite — évite les blocages silencieux sur IMAP APPEND.
+ */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Délai dépassé (${ms / 1000} s) — opération bloquée`)), ms)
+    ),
+  ]);
+}
 
 /**
  * Ajoute une ligne au journal et la diffuse immédiatement au popup.
@@ -240,7 +257,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
       const subj = (m.subject || "(sans objet)").substring(0, 60);
       try {
         await withRetry(
-          () => messenger.messages.copy([m.id], dstId),
+          () => withTimeout(messenger.messages.copy([m.id], dstId), CFG.COPY_TIMEOUT),
           `copy-${m.id}`
         );
         progress.done++;
@@ -262,7 +279,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
             await sleep(wait);
             if (state.cancel) break;
             try {
-              await messenger.messages.copy([m.id], dstId);
+              await withTimeout(messenger.messages.copy([m.id], dstId), CFG.COPY_TIMEOUT);
               progress.done++;
               log("ok", `✓ [${progress.done}/${progress.total}] ${subj}`);
               copied = true;
@@ -465,6 +482,16 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
     log("ok", `🏁 Migration terminée — ${progress.done} copiés · ${progress.duplicates.length} doublons · ${progress.errors.length} erreurs`);
   }
 
+  // ── Compte-rendu des messages non migrés
+  if (progress.errors.length > 0) {
+    log("warn", `─────────────────────────────────────────`);
+    log("warn", `📋 COMPTE-RENDU — ${progress.errors.length} message(s) non migré(s) :`);
+    for (const err of progress.errors) {
+      log("error", `  • ${err.subject} — ${err.reason}`);
+    }
+    log("warn", `─────────────────────────────────────────`);
+  }
+
   broadcast({
     type      : "COPY_DONE",
     done      : progress.done,
@@ -489,7 +516,7 @@ async function forceCopyDuplicates(duplicates) {
     try {
       // messenger.messages.copy() — même mécanisme natif, préserve la date
       await withRetry(
-        () => messenger.messages.copy([dup.id], dup.dstFolderId),
+        () => withTimeout(messenger.messages.copy([dup.id], dup.dstFolderId), CFG.COPY_TIMEOUT),
         "force-copy"
       );
       done++;
