@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.5
+ * Mail-Migrator CEN — background.js v1.6.6
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.5");
+console.log("[Mail-Migrator CEN] Chargé v1.6.6");
 
 const STATE_KEY = "mig_state";
 
@@ -105,7 +105,8 @@ function broadcast(msg) {
 
 function isPermErr(e) {
   const m = (e?.message || "").toLowerCase();
-  return ["permission denied", "quota", "no such folder", "already contains"].some(p => m.includes(p));
+  // "délai dépassé" = timeout — ne pas réessayer, l'opération est déjà abandonnée
+  return ["permission denied", "quota", "no such folder", "already contains", "délai dépassé"].some(p => m.includes(p));
 }
 
 function isM365ThrottleErr(e) {
@@ -136,7 +137,7 @@ async function withRetry(fn, label = "op") {
  */
 async function getAllMessages(folderId) {
   const msgs = [];
-  const result = await messenger.messages.list(folderId);
+  const result = await withTimeout(messenger.messages.list(folderId), 60000);
   if (result && result[Symbol.asyncIterator]) {
     for await (const m of result) msgs.push(m);
   } else {
@@ -459,7 +460,9 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
   }
 
   log("ok", `✓ ${foldersCreated} dossier(s) prêt(s). Attente 15 s pour que M365 les enregistre…`);
-  await sleep(15000);
+  await sleep(5000); log("info", "⏳ 10 s…");
+  await sleep(5000); log("info", "⏳ 5 s…");
+  await sleep(5000);
   log("ok", "✅ Dossiers enregistrés — démarrage de la copie des messages.");
 
   // ── Phase 2 : copier les messages dossier par dossier
