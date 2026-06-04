@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.6
+ * Mail-Migrator CEN — background.js v1.6.7
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.6");
+console.log("[Mail-Migrator CEN] Chargé v1.6.7");
 
 const STATE_KEY = "mig_state";
 
@@ -188,7 +188,7 @@ function snap(p) {
   return { done: p.done, total: p.total, dupes: p.duplicates.length, errors: p.errors.length };
 }
 
-async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, folderMap) {
+async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, folderMap, selectedSet) {
   if (state.cancel) return;
 
   const srcId = srcFolder.id ?? srcFolder;
@@ -323,13 +323,15 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
 
   for (const sub of subs) {
     if (state.cancel) return;
+    // Respecter la sélection de l'utilisateur
+    if (!selectedSet.has(sub.id)) continue;
     const dstSub = folderMap.get(sub.id);
     if (!dstSub) {
       log("warn", `⚠ Dossier destination manquant pour "${sub.name}", ignoré`);
       continue;
     }
     try {
-      await copyFolderRecursive(sub, dstSub, progress, dateFilter, folderMap);
+      await copyFolderRecursive(sub, dstSub, progress, dateFilter, folderMap, selectedSet);
     } catch(e) {
       log("error", `✗ Sous-dossier "${sub.name}" : ${e.message}`);
       progress.errors.push({ subject: `[Dossier] ${sub.name}`, reason: e.message });
@@ -346,7 +348,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
  * destination en une seule passe, AVANT de copier quoi que ce soit.
  * Retourne une Map : srcFolderId → dstFolderObject
  */
-async function buildDestFolderMap(srcRootFolders, dstFolderId) {
+async function buildDestFolderMap(srcRootFolders, dstFolderId, selectedSet) {
   const map = new Map();
   let created = 0;
 
@@ -368,6 +370,8 @@ async function buildDestFolderMap(srcRootFolders, dstFolderId) {
     }
     for (const sub of subs) {
       if (state.cancel) return;
+      // Ne créer que les sous-dossiers explicitement cochés
+      if (!selectedSet.has(sub.id)) continue;
       await recurse(sub, dstFolder.id);
     }
   }
@@ -446,11 +450,13 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
     !srcFolderIds.some(otherId => otherId !== id && isDescendantOf(id, otherId))
   );
 
+  // selectedSet contient TOUS les IDs cochés dans l'UI (y compris sous-dossiers)
+  const selectedSet   = new Set(srcFolderIds);
   const rootSrcFolders = rootSrcIds.map(id => folderCache[id]).filter(Boolean);
 
   // ── Phase 1 : créer tous les dossiers destination en une seule passe
   log("info", `📂 Phase 1 — création de l'arborescence destination (${rootSrcFolders.length} dossier(s) racine)…`);
-  const { map: folderMap, created: foldersCreated } = await buildDestFolderMap(rootSrcFolders, dstFolderId);
+  const { map: folderMap, created: foldersCreated } = await buildDestFolderMap(rootSrcFolders, dstFolderId, selectedSet);
 
   if (state.cancel) {
     state.running = false;
@@ -474,7 +480,7 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
       progress.errors.push({ subject: `[Dossier] ${srcFolder.name}`, reason: "Dossier destination non créé" });
       continue;
     }
-    await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter, folderMap);
+    await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter, folderMap, selectedSet);
   }
 
   state.running = false;

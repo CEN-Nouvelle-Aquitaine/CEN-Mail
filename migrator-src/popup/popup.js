@@ -228,23 +228,13 @@ function renderImapFolders(imapAccounts) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Retourne les IDs des dossiers cochés, en excluant ceux dont un ancêtre
- * est aussi coché (pour éviter de traiter le même contenu deux fois).
+ * Retourne TOUS les IDs des dossiers cochés.
+ * La déduplication (exclure les descendants de parents cochés) est faite
+ * côté background qui connaît l'arbre complet — ici on envoie tout
+ * pour que le background puisse filtrer les dossiers décochés.
  */
 function getSelectedFolderIds() {
-  const all = [...document.querySelectorAll(".f-cb:checked")].map(cb => cb.dataset.id);
-  const allSet = new Set(all);
-
-  // Pour chaque checkbox cochée, vérifier si son nœud parent est aussi coché
-  return [...document.querySelectorAll(".f-cb:checked")]
-    .filter(cb => {
-      const node   = cb.closest(".f-node");
-      const parent = node?.parentElement?.closest(".f-node");
-      const parentCb = parent?.querySelector(":scope > .f-header > .f-cb");
-      // On garde ce dossier si son parent direct n'est pas coché
-      return !parentCb || !parentCb.checked;
-    })
-    .map(cb => cb.dataset.id);
+  return [...document.querySelectorAll(".f-cb:checked")].map(cb => cb.dataset.id);
 }
 
 // ─────────────────────────────────────────────────────────────
