@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.9
+ * Mail-Migrator CEN — background.js v1.7.0
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.9");
+console.log("[Mail-Migrator CEN] Chargé v1.7.0");
 
 const STATE_KEY = "mig_state";
 
@@ -132,21 +132,16 @@ async function withRetry(fn, label = "op") {
 }
 
 /**
- * Collecte tous les messages d'un dossier.
- * Gère l'async iterator (TB 128+) et l'ancienne API paginée.
+ * Collecte tous les messages d'un dossier via l'API paginée TB.
+ * TB ne fournit pas de Symbol.asyncIterator sur MessageList (TB 151).
  */
 async function getAllMessages(folderId) {
   const msgs = [];
-  const result = await withTimeout(messenger.messages.list(folderId), 60000);
-  if (result && result[Symbol.asyncIterator]) {
-    for await (const m of result) msgs.push(m);
-  } else {
-    let page = result;
-    do {
-      msgs.push(...(page?.messages ?? []));
-      page = page?.id ? await messenger.messages.continueList(page.id) : null;
-    } while (page?.messages?.length);
-  }
+  let page = await withTimeout(messenger.messages.list(folderId), 60000);
+  do {
+    msgs.push(...(page?.messages ?? []));
+    page = page?.id ? await messenger.messages.continueList(page.id) : null;
+  } while (page?.messages?.length);
   return msgs;
 }
 
@@ -277,7 +272,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
       const subj = (m.subject || "(sans objet)").substring(0, 60);
       try {
         await withRetry(
-          () => withTimeout(messenger.messages.copy([m.id], dstId), CFG.COPY_TIMEOUT),
+          () => withTimeout(messenger.messages.copy([m.id], dstId, { isUserAction: true }), CFG.COPY_TIMEOUT),
           `copy-${m.id}`
         );
         progress.done++;
@@ -299,7 +294,7 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
             await sleep(wait);
             if (state.cancel) break;
             try {
-              await withTimeout(messenger.messages.copy([m.id], dstId), CFG.COPY_TIMEOUT);
+              await withTimeout(messenger.messages.copy([m.id], dstId, { isUserAction: true }), CFG.COPY_TIMEOUT);
               progress.done++;
               log("ok", `✓ [${progress.done}/${progress.total}] ${subj}`);
               copied = true;
@@ -437,13 +432,9 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
     }
 
     for (const acc of accounts) {
-      let folders = acc.folders ?? [];
+      let folders = acc.rootFolder?.subFolders ?? [];
       if (!folders.length) {
-        try {
-          folders = await messenger.folders.getSubFolders(
-            acc.rootFolder?.id ?? acc.rootFolder, true
-          );
-        } catch {}
+        try { folders = await messenger.folders.getSubFolders(acc.rootFolder.id, true); } catch {}
       }
       for (const f of folders) cacheFolder(f);
     }
@@ -552,7 +543,7 @@ async function forceCopyDuplicates(duplicates) {
     try {
       // messenger.messages.copy() — même mécanisme natif, préserve la date
       await withRetry(
-        () => withTimeout(messenger.messages.copy([dup.id], dup.dstFolderId), CFG.COPY_TIMEOUT),
+        () => withTimeout(messenger.messages.copy([dup.id], dup.dstFolderId, { isUserAction: true }), CFG.COPY_TIMEOUT),
         "force-copy"
       );
       done++;
@@ -577,13 +568,9 @@ async function buildFolderTree() {
   const imap   = [];
 
   for (const acc of accounts) {
-    let folders = acc.folders ?? [];
+    let folders = acc.rootFolder?.subFolders ?? [];
     if (!folders.length) {
-      try {
-        folders = await messenger.folders.getSubFolders(
-          acc.rootFolder?.id ?? acc.rootFolder, true
-        );
-      } catch {}
+      try { folders = await messenger.folders.getSubFolders(acc.rootFolder.id, true); } catch {}
     }
     const entry = { id: acc.id, name: acc.name, type: acc.type, folders };
     source.push(entry);
