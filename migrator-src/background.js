@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.7
+ * Mail-Migrator CEN — background.js v1.6.8
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.7");
+console.log("[Mail-Migrator CEN] Chargé v1.6.8");
 
 const STATE_KEY = "mig_state";
 
@@ -154,17 +154,36 @@ async function getAllMessages(folderId) {
 // GESTION DES DOSSIERS
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Nettoie un nom de dossier pour le rendre compatible IMAP / M365.
+ * - /  et \  → tiret  (séparateurs de hiérarchie IMAP)
+ * - *  et %  → supprimés  (wildcards LIST/LSUB)
+ * - espaces en début/fin → supprimés
+ */
+function sanitizeFolderName(name) {
+  const safe = (name || "")
+    .replace(/[/\\]/g, "-")
+    .replace(/[*%]/g, "")
+    .trim();
+  return safe || "dossier-sans-nom";
+}
+
 async function ensureSubFolder(parentFolderId, name) {
+  const safeName = sanitizeFolderName(name);
+  if (safeName !== name) {
+    log("warn", `⚠ Dossier "${name}" → renommé "${safeName}" (caractères IMAP incompatibles)`);
+  }
+
   let subs = [];
   try { subs = await messenger.folders.getSubFolders(parentFolderId, false); } catch {}
-  const existing = subs.find(f => f.name === name);
+  const existing = subs.find(f => f.name === safeName || f.name === name);
   if (existing) return existing;
 
-  log("info", `📂 Création : ${name}`);
+  log("info", `📂 Création : ${safeName}`);
   try {
     const created = await withRetry(
-      () => messenger.folders.create(parentFolderId, name),
-      `create-folder-${name}`
+      () => messenger.folders.create(parentFolderId, safeName),
+      `create-folder-${safeName}`
     );
     return created;
   } catch(e) {
@@ -172,10 +191,10 @@ async function ensureSubFolder(parentFolderId, name) {
     await sleep(1000);
     try {
       const subs2 = await messenger.folders.getSubFolders(parentFolderId, false);
-      const found = subs2.find(f => f.name === name);
-      if (found) { log("warn", `⚠ ${name} : erreur création mais dossier trouvé`); return found; }
+      const found = subs2.find(f => f.name === safeName || f.name === name);
+      if (found) { log("warn", `⚠ ${safeName} : erreur création mais dossier trouvé`); return found; }
     } catch {}
-    log("error", `✗ Impossible de créer ${name} : ${e.message}`);
+    log("error", `✗ Impossible de créer "${safeName}" : ${e.message}`);
     throw e;
   }
 }
