@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.6.8
+ * Mail-Migrator CEN — background.js v1.6.9
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.6.8");
+console.log("[Mail-Migrator CEN] Chargé v1.6.9");
 
 const STATE_KEY = "mig_state";
 
@@ -409,7 +409,7 @@ async function buildDestFolderMap(srcRootFolders, dstFolderId, selectedSet) {
 async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dateFrom = null, dateTo = null) {
   state.running = true;
   state.cancel  = false;
-  logLines.length = 0; // Réinitialiser le journal
+  logLines.length = 0;
   applySpeedProfile(speedProfile);
 
   const p = SPEED_PROFILES[speedProfile] ?? SPEED_PROFILES.normal;
@@ -424,110 +424,118 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
   const progress = { done: 0, total: 0, duplicates: [], errors: [] };
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: "" });
 
-  // ── Construire le cache de dossiers
-  const accounts = await messenger.accounts.list();
-  const folderCache = {};
+  try {
 
-  function cacheFolder(f) {
-    if (!f?.id) return;
-    folderCache[f.id] = f;
-    for (const sub of (f.subFolders ?? [])) cacheFolder(sub);
-  }
+    // ── Construire le cache de dossiers
+    const accounts = await messenger.accounts.list();
+    const folderCache = {};
 
-  for (const acc of accounts) {
-    let folders = acc.folders ?? [];
-    if (!folders.length) {
+    function cacheFolder(f) {
+      if (!f?.id) return;
+      folderCache[f.id] = f;
+      for (const sub of (f.subFolders ?? [])) cacheFolder(sub);
+    }
+
+    for (const acc of accounts) {
+      let folders = acc.folders ?? [];
+      if (!folders.length) {
+        try {
+          folders = await messenger.folders.getSubFolders(
+            acc.rootFolder?.id ?? acc.rootFolder, true
+          );
+        } catch {}
+      }
+      for (const f of folders) cacheFolder(f);
+    }
+
+    // ── Vérifier la destination
+    const dstFolder = folderCache[dstFolderId];
+    if (!dstFolder) throw new Error("Dossier destination introuvable — actualisez et réessayez.");
+
+    // ── Dédupliquer : exclure les IDs dont un ancêtre est aussi sélectionné
+    function isDescendantOf(childId, parentId) {
+      const parent = folderCache[parentId];
+      if (!parent?.subFolders?.length) return false;
+      for (const sub of parent.subFolders) {
+        if (sub.id === childId) return true;
+        if (isDescendantOf(childId, sub.id)) return true;
+      }
+      return false;
+    }
+
+    const rootSrcIds = srcFolderIds.filter(id =>
+      !srcFolderIds.some(otherId => otherId !== id && isDescendantOf(id, otherId))
+    );
+
+    // selectedSet contient TOUS les IDs cochés dans l'UI (y compris sous-dossiers)
+    const selectedSet    = new Set(srcFolderIds);
+    const rootSrcFolders = rootSrcIds.map(id => folderCache[id]).filter(Boolean);
+
+    // ── Phase 1 : créer tous les dossiers destination en une seule passe
+    log("info", `📂 Phase 1 — création de l'arborescence (${rootSrcFolders.length} dossier(s) racine)…`);
+    const { map: folderMap, created: foldersCreated } = await buildDestFolderMap(rootSrcFolders, dstFolderId, selectedSet);
+
+    if (state.cancel) return; // le finally enverra COPY_DONE cancelled
+
+    log("ok", `✓ ${foldersCreated} dossier(s) prêt(s). Attente 15 s pour que M365 les enregistre…`);
+    await sleep(5000); log("info", "⏳ 10 s…");
+    await sleep(5000); log("info", "⏳ 5 s…");
+    await sleep(5000);
+    log("ok", "✅ Dossiers enregistrés — démarrage de la copie des messages.");
+
+    // ── Phase 2 : copier les messages dossier par dossier
+    log("info", "📨 Phase 2 — copie des messages…");
+    for (const srcFolder of rootSrcFolders) {
+      if (state.cancel) break;
+      const dstSub = folderMap.get(srcFolder.id);
+      if (!dstSub) {
+        progress.errors.push({ subject: `[Dossier] ${srcFolder.name}`, reason: "Dossier destination non créé" });
+        continue;
+      }
       try {
-        folders = await messenger.folders.getSubFolders(
-          acc.rootFolder?.id ?? acc.rootFolder, true
-        );
-      } catch {}
+        await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter, folderMap, selectedSet);
+      } catch(e) {
+        // Sécurité : toute exception non gérée dans la récursion est capturée ici
+        log("error", `✗ Erreur inattendue sur "${srcFolder.name}" : ${e.message}`);
+        progress.errors.push({ subject: `[Dossier] ${srcFolder.name}`, reason: e.message });
+      }
     }
-    for (const f of folders) cacheFolder(f);
-  }
 
-  // ── Vérifier la destination
-  const dstFolder = folderCache[dstFolderId];
-  if (!dstFolder) {
-    broadcast({ type: "COPY_ERROR", error: "Dossier destination introuvable. Actualisez et réessayez." });
+  } catch(e) {
+    // Exception inattendue (cache dossiers, destination manquante, etc.)
+    log("error", `✗ Erreur fatale : ${e.message}`);
+    const loc = e.stack?.split("\n")[1]?.trim();
+    if (loc) log("error", `  ↳ ${loc}`);
+    progress.errors.push({ subject: "[Erreur fatale]", reason: e.message });
+
+  } finally {
     state.running = false;
-    return;
-  }
 
-  // ── Dédupliquer : exclure les IDs dont un ancêtre est aussi sélectionné
-  function isDescendantOf(childId, parentId) {
-    const parent = folderCache[parentId];
-    if (!parent?.subFolders?.length) return false;
-    for (const sub of parent.subFolders) {
-      if (sub.id === childId) return true;
-      if (isDescendantOf(childId, sub.id)) return true;
+    // Compte-rendu toujours affiché, même en cas d'arrêt inattendu
+    if (progress.errors.length > 0) {
+      log("warn", "─────────────────────────────────────────");
+      log("warn", `📋 COMPTE-RENDU — ${progress.errors.length} non migré(s) :`);
+      for (const err of progress.errors) {
+        log("error", `  • ${err.subject} — ${err.reason}`);
+      }
+      log("warn", "─────────────────────────────────────────");
     }
-    return false;
-  }
 
-  const rootSrcIds = srcFolderIds.filter(id =>
-    !srcFolderIds.some(otherId => otherId !== id && isDescendantOf(id, otherId))
-  );
-
-  // selectedSet contient TOUS les IDs cochés dans l'UI (y compris sous-dossiers)
-  const selectedSet   = new Set(srcFolderIds);
-  const rootSrcFolders = rootSrcIds.map(id => folderCache[id]).filter(Boolean);
-
-  // ── Phase 1 : créer tous les dossiers destination en une seule passe
-  log("info", `📂 Phase 1 — création de l'arborescence destination (${rootSrcFolders.length} dossier(s) racine)…`);
-  const { map: folderMap, created: foldersCreated } = await buildDestFolderMap(rootSrcFolders, dstFolderId, selectedSet);
-
-  if (state.cancel) {
-    state.running = false;
-    log("warn", "⛔ Annulé pendant la création des dossiers.");
-    broadcast({ type: "COPY_DONE", done: 0, total: 0, duplicates: [], errors: [], status: "cancelled" });
-    return;
-  }
-
-  log("ok", `✓ ${foldersCreated} dossier(s) prêt(s). Attente 15 s pour que M365 les enregistre…`);
-  await sleep(5000); log("info", "⏳ 10 s…");
-  await sleep(5000); log("info", "⏳ 5 s…");
-  await sleep(5000);
-  log("ok", "✅ Dossiers enregistrés — démarrage de la copie des messages.");
-
-  // ── Phase 2 : copier les messages dossier par dossier
-  log("info", "📨 Phase 2 — copie des messages…");
-  for (const srcFolder of rootSrcFolders) {
-    if (state.cancel) break;
-    const dstSub = folderMap.get(srcFolder.id);
-    if (!dstSub) {
-      progress.errors.push({ subject: `[Dossier] ${srcFolder.name}`, reason: "Dossier destination non créé" });
-      continue;
+    if (state.cancel) {
+      log("warn", `⛔ Migration annulée — ${progress.done} message(s) déjà copiés`);
+    } else {
+      log("ok", `🏁 Migration terminée — ${progress.done} copiés · ${progress.duplicates.length} doublons · ${progress.errors.length} erreurs`);
     }
-    await copyFolderRecursive(srcFolder, dstSub, progress, dateFilter, folderMap, selectedSet);
+
+    broadcast({
+      type      : "COPY_DONE",
+      done      : progress.done,
+      total     : progress.total,
+      duplicates: progress.duplicates,
+      errors    : progress.errors,
+      status    : state.cancel ? "cancelled" : "done",
+    });
   }
-
-  state.running = false;
-
-  if (state.cancel) {
-    log("warn", `⛔ Migration annulée par l'utilisateur — ${progress.done} message(s) déjà copiés`);
-  } else {
-    log("ok", `🏁 Migration terminée — ${progress.done} copiés · ${progress.duplicates.length} doublons · ${progress.errors.length} erreurs`);
-  }
-
-  // ── Compte-rendu des messages non migrés
-  if (progress.errors.length > 0) {
-    log("warn", `─────────────────────────────────────────`);
-    log("warn", `📋 COMPTE-RENDU — ${progress.errors.length} message(s) non migré(s) :`);
-    for (const err of progress.errors) {
-      log("error", `  • ${err.subject} — ${err.reason}`);
-    }
-    log("warn", `─────────────────────────────────────────`);
-  }
-
-  broadcast({
-    type      : "COPY_DONE",
-    done      : progress.done,
-    total     : progress.total,
-    duplicates: progress.duplicates,
-    errors    : progress.errors,
-    status    : state.cancel ? "cancelled" : "done",
-  });
 }
 
 // ─────────────────────────────────────────────────────────────

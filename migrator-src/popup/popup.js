@@ -624,9 +624,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         break;
 
       case "COPY_ERROR":
+        // Rester sur l'écran en cours — ne pas naviguer vers setup (logs perdus)
         appendLog({ level:"error", text:`✗ Erreur fatale : ${msg.error}`, ts: Date.now() }, "log-panel");
-        goStep("step-setup");
-        setStatus("setup-status", "error", `Erreur : ${escHtml(msg.error)}`);
+        appendLog({ level:"error", text:`✗ Erreur fatale : ${msg.error}`, ts: Date.now() }, "log-panel-res");
+        $("btn-cancel").disabled = true;
+        // Montrer un bandeau d'erreur sur l'écran de progression si visible
+        if ($("step-progress").style.display !== "none") {
+          setStatus("setup-status", "error", `Migration interrompue : ${escHtml(msg.error)}`);
+          const retour = document.createElement("button");
+          retour.textContent = "↩ Retour à la configuration";
+          retour.style.cssText = "margin-top:10px;padding:5px 12px;cursor:pointer;display:block;";
+          retour.addEventListener("click", () => goStep("step-setup"));
+          $("log-panel").appendChild(retour);
+        }
         break;
 
       case "FORCE_PROGRESS":
