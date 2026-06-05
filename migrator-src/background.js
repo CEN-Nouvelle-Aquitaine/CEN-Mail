@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.7.0
+ * Mail-Migrator CEN — background.js v1.7.1
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.7.0");
+console.log("[Mail-Migrator CEN] Chargé v1.7.1");
 
 const STATE_KEY = "mig_state";
 
@@ -65,6 +65,14 @@ const logLines = [];
 // ─────────────────────────────────────────────────────────────
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Keepalive : empêche TB (MV3 Limited Event Page) de suspendre le background
+// pendant une migration active. L'alarme se déclenche toutes les 25 s.
+messenger.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === "migrator-keepalive") {
+    console.log("[Migrator] keepalive — migration en cours");
+  }
+});
 
 /**
  * Enveloppe une promesse avec un timeout.
@@ -407,6 +415,9 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
   logLines.length = 0;
   applySpeedProfile(speedProfile);
 
+  // Keepalive : empêche TB de suspendre le background quand le popup est fermé
+  messenger.alarms.create("migrator-keepalive", { periodInMinutes: 0.4 }); // toutes les ~25 s
+
   const p = SPEED_PROFILES[speedProfile] ?? SPEED_PROFILES.normal;
   log("info", `🚀 Migration démarrée — profil : ${speedProfile} (batch ${p.batchSize} msgs, ${p.batchDelay}ms entre batchs)`);
 
@@ -501,6 +512,7 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
 
   } finally {
     state.running = false;
+    messenger.alarms.clear("migrator-keepalive");
 
     // Compte-rendu toujours affiché, même en cas d'arrêt inattendu
     if (progress.errors.length > 0) {

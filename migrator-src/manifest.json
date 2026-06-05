@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mail-Migrator CEN",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Migration dossiers locaux → compte Outlook monté dans Thunderbird (dates préservées via copie native)",
   "author": "DSI CEN Nouvelle-Aquitaine",
   "browser_specific_settings": {
@@ -15,7 +15,8 @@
     "accountsFolders",
     "messagesRead",
     "messagesMove",
-    "storage"
+    "storage",
+    "alarms"
   ],
   "background": {
     "scripts": ["background.js"]
