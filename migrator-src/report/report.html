@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Rapport de migration — Mail-Migrator CEN</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 24px 32px; background: #f0f4f0; color: #222; }
+    h1 { color: #2e5d2e; border-bottom: 3px solid #2e5d2e; padding-bottom: 10px; margin: 0 0 8px; font-size: 20px; }
+    .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
+
+    .cards { display: flex; gap: 14px; margin-bottom: 24px; flex-wrap: wrap; }
+    .card { background: white; border-radius: 10px; padding: 14px 22px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.10); min-width: 110px; }
+    .card .val { font-size: 2.2em; font-weight: 700; line-height: 1; }
+    .card .lbl { font-size: 11px; color: #888; margin-top: 5px; text-transform: uppercase; letter-spacing: .04em; }
+    .c-ok   .val { color: #2e7d32; }
+    .c-dupe .val { color: #f57c00; }
+    .c-err  .val { color: #c62828; }
+    .c-info .val { color: #1565c0; }
+
+    h2 { color: #2e5d2e; font-size: 15px; margin: 24px 0 8px; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.10); }
+    th { background: #2e5d2e; color: white; padding: 9px 14px; text-align: left; font-size: 12px; font-weight: 600; letter-spacing: .03em; }
+    td { padding: 7px 14px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f7fbf7; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .st-ok   { color: #2e7d32; font-weight: 600; }
+    .st-warn { color: #f57c00; font-weight: 600; }
+    .st-err  { color: #c62828; font-weight: 600; }
+
+    .err-block { background: white; border-radius: 10px; padding: 4px 14px; box-shadow: 0 1px 4px rgba(0,0,0,.10); }
+    .err-row { padding: 7px 0; border-bottom: 1px solid #f5f0f0; font-size: 12px; display: flex; gap: 10px; align-items: baseline; }
+    .err-row:last-child { border-bottom: none; }
+    .err-subj { color: #c62828; font-weight: 600; min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .err-reason { color: #777; flex-shrink: 0; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .empty { color: #999; font-style: italic; padding: 10px 0; }
+    .btn-close { margin-top: 28px; padding: 8px 20px; background: #2e5d2e; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .btn-close:hover { background: #1b3d1b; }
+    .badge-ok   { background:#e8f5e9; color:#2e7d32; border-radius:4px; padding:1px 7px; font-size:11px; }
+    .badge-warn { background:#fff3e0; color:#e65100; border-radius:4px; padding:1px 7px; font-size:11px; }
+    .badge-err  { background:#ffebee; color:#c62828; border-radius:4px; padding:1px 7px; font-size:11px; }
+  </style>
+</head>
+<body>
+  <h1>📊 Rapport de migration — Mail-Migrator CEN</h1>
+  <div class="meta" id="meta">Chargement…</div>
+
+  <div class="cards" id="cards"></div>
+
+  <h2>Dossiers migrés</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Dossier</th>
+        <th class="num">Source</th>
+        <th class="num">Dans la plage</th>
+        <th class="num">Copiés</th>
+        <th class="num">Doublons</th>
+        <th class="num">Erreurs</th>
+        <th>Statut</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <div id="err-section" style="display:none">
+    <h2>⚠ Messages non migrés</h2>
+    <div class="err-block" id="err-block"></div>
+  </div>
+
+  <button class="btn-close" onclick="window.close()">Fermer</button>
+
+  <script src="report.js"></script>
+</body>
+</html>

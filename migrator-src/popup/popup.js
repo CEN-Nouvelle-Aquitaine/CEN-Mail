@@ -579,6 +579,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ── Force copy ──
   $("btn-force").addEventListener("click", forceCopySelected);
 
+  // ── Rapport détaillé ──
+  $("btn-report").addEventListener("click", () => {
+    messenger.tabs.create({ url: messenger.runtime.getURL("report/report.html") });
+  });
+
   // ── Recommencer ──
   $("btn-restart").addEventListener("click", async () => {
     // Effacer l'état persisté

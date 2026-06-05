@@ -1,5 +1,5 @@
 /**
- * Mail-Migrator CEN — background.js v1.7.1
+ * Mail-Migrator CEN — background.js v1.7.2
  *
  * Stratégie : messenger.messages.copy() uniquement.
  * C'est l'équivalent API du "Copier vers" natif de Thunderbird (même code path
@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.7.1");
+console.log("[Mail-Migrator CEN] Chargé v1.7.2");
 
 const STATE_KEY = "mig_state";
 
@@ -216,6 +216,9 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
   const srcId = srcFolder.id ?? srcFolder;
   const dstId = dstFolder.id ?? dstFolder;
 
+  // Snapshot de départ pour les stats de ce dossier spécifique
+  const snapStart = { done: progress.done, dupes: progress.duplicates.length, errors: progress.errors.length };
+
   // ── Indexer les Message-ID déjà présents en destination (détection doublons)
   const dstIndex = new Set();
   try {
@@ -337,6 +340,22 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
     log("ok", `✅ "${srcFolder.name}" terminé : ${toCopy.length} traité(s)`);
   }
 
+  // Enregistrer les stats de ce dossier pour le rapport
+  if (progress.folderStats) {
+    const folderCopied = progress.done              - snapStart.done;
+    const folderDupes  = progress.duplicates.length - snapStart.dupes;
+    const folderErrors = progress.errors.length     - snapStart.errors;
+    progress.folderStats.push({
+      name           : srcFolder.name,
+      srcCount       : srcMsgs.length,
+      toCopy         : toCopy.length,
+      duplicatesKnown: dupeCount,        // doublons détectés avant copie
+      copied         : folderCopied,
+      duplicates     : folderDupes,      // doublons détectés pendant copie
+      errors         : folderErrors,
+    });
+  }
+
   // ── Récursion sous-dossiers (via la map pré-construite)
   let subs = srcFolder.subFolders ?? [];
   if (!subs.length) {
@@ -427,7 +446,8 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
     log("info", `🗓 Filtre de date actif : du ${fmt(dateFrom)} au ${fmt(dateTo)}`);
   }
 
-  const progress = { done: 0, total: 0, duplicates: [], errors: [] };
+  const startTime = Date.now();
+  const progress  = { done: 0, total: 0, duplicates: [], errors: [], folderStats: [] };
   broadcast({ type: "COPY_PROGRESS", ...snap(progress), currentFolder: "" });
 
   try {
@@ -529,6 +549,22 @@ async function startCopy(srcFolderIds, dstFolderId, speedProfile = "normal", dat
     } else {
       log("ok", `🏁 Migration terminée — ${progress.done} copiés · ${progress.duplicates.length} doublons · ${progress.errors.length} erreurs`);
     }
+
+    // Sauvegarder le rapport pour la page rapport.html
+    browser.storage.local.set({ mig_report: {
+      ts      : Date.now(),
+      profile : speedProfile,
+      duration: Date.now() - startTime,
+      status  : state.cancel ? "cancelled" : "done",
+      folders : progress.folderStats,
+      totals  : {
+        copied    : progress.done,
+        duplicates: progress.duplicates.length,
+        errors    : progress.errors.length,
+        total     : progress.total,
+      },
+      errors  : progress.errors,
+    }});
 
     broadcast({
       type      : "COPY_DONE",
