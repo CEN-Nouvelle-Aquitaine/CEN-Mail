@@ -1327,7 +1327,6 @@ async function restoreState() {
   } else if (isSync) {
     loadSyncAccounts();
     if (state.type === "SYNC_APPLY_DONE" || state.type === "GRAPH_APPLY_DONE") {
-      // Restaurer l'affichage final
       showSyncStep(3);
       const skip = state.skipped ? ` · ${state.skipped} non trouvés` : "";
       const errs = state.errors?.length ? ` · ${state.errors.length} erreur(s)` : "";
@@ -1335,6 +1334,15 @@ async function restoreState() {
         `✅ ${state.done || 0}/${state.total || 0} appliqués${skip}${errs}`,
         state.errors?.length ? "warning" : "success");
       await send({ action:"clearMigState" });
+    } else if (state.type === "GRAPH_APPLY_PROGRESS" || state.type === "SYNC_APPLY_PROGRESS") {
+      // Opération en cours quand le popup a été fermé — restaurer step 4
+      showSyncStep(4);
+      const pct = state.total > 0 ? Math.round((state.done / state.total) * 100) : 0;
+      syncApplyBar.style.width = pct + "%";
+      syncApplyCount.textContent = `${state.done} / ${state.total} (reprise)`;
+      syncApplyPct.textContent   = pct + " %";
+      document.querySelector("[data-tab='sync']").classList.add("active");
+      document.getElementById("panel-sync").classList.add("active");
     } else if (state.type === "SYNC_ANALYSE_DONE") {
       _syncResult = state;
       renderSyncResults(state);

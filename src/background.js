@@ -1588,10 +1588,20 @@ messenger.runtime.onMessage.addListener(async (req) => {
         mig.running = true;
         startKeepalive();
         applyCategories(req.categories)
-          .then(() => { mig.running = false; stopKeepalive(); })
+          .then(r => {
+            mig.running = false; stopKeepalive();
+            messenger.notifications.create("cen-sync-done", {
+              type:"basic", title:"Mail-CEN — Catégories appliquées",
+              message: `✅ ${r?.done ?? "?"} message(s) traités via IMAP.`,
+            });
+          })
           .catch(e  => {
             mig.running = false; stopKeepalive();
             broadcast({ type:"SYNC_ERROR", error: e.message });
+            messenger.notifications.create("cen-sync-err", {
+              type:"basic", title:"Mail-CEN — Erreur",
+              message: "❌ " + e.message,
+            });
           });
         return { started: true };
       }
@@ -1629,8 +1639,23 @@ messenger.runtime.onMessage.addListener(async (req) => {
         mig.running = true;
         startKeepalive();
         applyCategoriesViaGraph(req.categories)
-          .then(r  => { mig.running=false; stopKeepalive(); broadcast({ type:"GRAPH_APPLY_DONE", ...r }); })
-          .catch(e => { mig.running=false; stopKeepalive(); broadcast({ type:"GRAPH_ERROR", error:e.message }); });
+          .then(r => {
+            mig.running=false; stopKeepalive();
+            broadcast({ type:"GRAPH_APPLY_DONE", ...r });
+            const skip = r.skipped ? ` · ${r.skipped} non trouvés` : "";
+            messenger.notifications.create("cen-graph-done", {
+              type:"basic", title:"Mail-CEN — Catégories Outlook appliquées",
+              message: `✅ ${r.done}/${r.total} message(s) traités via Graph${skip}.`,
+            });
+          })
+          .catch(e => {
+            mig.running=false; stopKeepalive();
+            broadcast({ type:"GRAPH_ERROR", error:e.message });
+            messenger.notifications.create("cen-graph-err", {
+              type:"basic", title:"Mail-CEN — Erreur Graph",
+              message: "❌ " + e.message,
+            });
+          });
         return { started: true };
       }
 
