@@ -1,9 +1,19 @@
 /**
- * Mail-CEN background.js v7.1
+ * Mail-CEN background.js v7.2.1
  * Modules : M365 · Étiquettes · Migration · Synchronisation · Export · Tags
  */
 "use strict";
-console.log("[Mail-CEN] Chargement v7.1");
+console.log("[Mail-CEN] Chargement v7.2.1");
+
+// Keepalive — empêche TB (MV3 Limited Event Page / TB151+) de suspendre le background
+// pendant les opérations longues (analyse, application des catégories).
+messenger.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === "mail-cen-keepalive") {
+    console.log("[Mail-CEN] keepalive — opération en cours");
+  }
+});
+function startKeepalive() { messenger.alarms.create("mail-cen-keepalive", { periodInMinutes: 0.4 }); }
+function stopKeepalive()  { messenger.alarms.clear("mail-cen-keepalive"); }
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -796,15 +806,21 @@ async function analyseBoxes(srcAccountId, dstAccountId) {
       }
 
       if (!byCategory[olCat]) byCategory[olCat] = {
-        olCategory : olCat,
-        tbTagKey   : tagKey,
-        color      : tbTagIndex[tagKey]?.color ?? "#4caf50",
-        messages   : [],
-        notFound   : 0,
+        olCategory       : olCat,
+        tbTagKey         : tagKey,
+        color            : tbTagIndex[tagKey]?.color ?? "#4caf50",
+        messages         : [],
+        notFound         : 0,
+        notFoundMessages : [],
       };
 
       if (!dstMsg) {
         byCategory[olCat].notFound++;
+        byCategory[olCat].notFoundMessages.push({
+          subject: srcInfo.subject,
+          sender : srcInfo.sender,
+          date   : srcInfo.date,
+        });
         notFoundTotal++;
       } else {
         const alreadyHas = dstMsg.tags.some(t => t.toLowerCase() === olCat.toLowerCase());
@@ -1551,19 +1567,21 @@ messenger.runtime.onMessage.addListener(async (req) => {
       case "analyseBoxes": {
         if (mig.running) return { error:"Une opération est déjà en cours." };
         mig.running = true;
+        startKeepalive();
         analyseBoxes(req.srcAccountId, req.dstAccountId)
-          .then(r  => { mig.running=false; broadcast({ type:"SYNC_ANALYSE_DONE", ...r }); })
-          .catch(e => { mig.running=false; broadcast({ type:"SYNC_ERROR", error:e.message }); });
+          .then(r  => { mig.running=false; stopKeepalive(); broadcast({ type:"SYNC_ANALYSE_DONE", ...r }); })
+          .catch(e => { mig.running=false; stopKeepalive(); broadcast({ type:"SYNC_ERROR", error:e.message }); });
         return { started:true };
       }
 
       case "applyCategories": {
         if (mig.running) return { error:"Une opération est déjà en cours." };
         mig.running = true;
+        startKeepalive();
         applyCategories(req.categories)
-          .then(() => { mig.running = false; })
+          .then(() => { mig.running = false; stopKeepalive(); })
           .catch(e  => {
-            mig.running = false;
+            mig.running = false; stopKeepalive();
             broadcast({ type:"SYNC_ERROR", error: e.message });
           });
         return { started: true };
@@ -1600,9 +1618,10 @@ messenger.runtime.onMessage.addListener(async (req) => {
         if (!isTokenValid()) return { error: "Non authentifié — connectez-vous d'abord." };
         if (mig.running) return { error: "Une opération est déjà en cours." };
         mig.running = true;
+        startKeepalive();
         applyCategoriesViaGraph(req.categories)
-          .then(r  => { mig.running=false; broadcast({ type:"GRAPH_APPLY_DONE", ...r }); })
-          .catch(e => { mig.running=false; broadcast({ type:"GRAPH_ERROR", error:e.message }); });
+          .then(r  => { mig.running=false; stopKeepalive(); broadcast({ type:"GRAPH_APPLY_DONE", ...r }); })
+          .catch(e => { mig.running=false; stopKeepalive(); broadcast({ type:"GRAPH_ERROR", error:e.message }); });
         return { started: true };
       }
 

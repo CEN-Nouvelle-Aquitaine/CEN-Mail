@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mail-CEN",
-  "version": "7.2.1",
+  "version": "7.2.2",
   "description": "Outil de gestion mail du Conservatoire d'Espaces Naturels",
   "author": "Mail-CEN",
   "browser_specific_settings": {
@@ -11,7 +11,7 @@
     }
   },
   "permissions": [
-    "storage", "menus", "identity",
+    "storage", "menus", "identity", "alarms",
     "messagesRead", "messagesMove", "messagesImport", "messagesDelete",
     "messagesTags", "messagesTagsList", "messagesUpdate",
     "accountsRead", "accountsFolders",

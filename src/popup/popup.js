@@ -592,7 +592,42 @@ syncAnalyse.addEventListener("click", async () => {
 
 // (Sync broadcasts handled in unified listener above)
 
+let _notFoundByCategory = [];
+
+function showNotFoundModal() {
+  if (!_notFoundByCategory.length) return;
+  const total = _notFoundByCategory.reduce((s,c) => s + c.notFoundMessages.length, 0);
+  const rows = _notFoundByCategory.map(cat => {
+    const items = cat.notFoundMessages.map(m => {
+      const d = m.date ? new Date(m.date).toLocaleDateString("fr-FR") : "—";
+      return `<div style="padding:4px 0;border-bottom:1px solid var(--border);font-size:11.5px">
+        <div style="font-weight:500;color:var(--text)">${esc(m.subject || "(sans sujet)")}</div>
+        <div style="color:var(--text-3);font-size:10.5px">👤 ${esc(m.sender||"—")} · 📅 ${d}</div>
+      </div>`;
+    }).join("");
+    return `<div style="margin-bottom:10px">
+      <div style="font-weight:700;color:var(--accent);margin-bottom:4px">
+        ${esc(cat.olCategory)} (${cat.notFoundMessages.length})
+      </div>
+      ${items}
+    </div>`;
+  }).join("");
+
+  confirm({
+    icon : "⚠️",
+    title: `${total} message(s) non trouvés côté Outlook`,
+    html : `<div class="highlight" style="margin-bottom:10px">Ces messages ont une étiquette côté source mais n'ont pas été trouvés dans la boîte Outlook. Ils n'ont probablement pas encore été migrés.</div>${rows}`,
+    confirmLabel: "Fermer",
+    confirmClass: "btn-ghost",
+  });
+}
+
 function renderSyncResults(r) {
+  // Stocker les non-trouvés pour le modal
+  _notFoundByCategory = r.notFoundTotal
+    ? r.categories.filter(c => c.notFoundMessages?.length)
+    : [];
+
   // Résumé global
   const toApply = r.categories.reduce((s,c) => s + c.messages.length, 0);
   syncSummary.innerHTML = `
@@ -609,11 +644,16 @@ function renderSyncResults(r) {
       <div class="sync-sum-label">catégories à appliquer</div>
     </div>
     ${r.notFoundTotal ? `
-    <div class="sync-sum-card">
+    <div class="sync-sum-card" id="sync-nf-card" style="cursor:pointer;border:1px solid var(--warning);border-radius:var(--radius)" title="Cliquer pour voir la liste">
       <div class="sync-sum-num" style="color:var(--warning)">${r.notFoundTotal}</div>
-      <div class="sync-sum-label">non trouvés côté Outlook</div>
+      <div class="sync-sum-label" style="color:var(--warning)">non trouvés côté Outlook ℹ️</div>
     </div>` : ""}
   `;
+
+  if (r.notFoundTotal) {
+    const nfCard = document.getElementById("sync-nf-card");
+    if (nfCard) nfCard.addEventListener("click", showNotFoundModal);
+  }
 
   if (r.noMapping.length) {
     syncUnmapped.style.display = "block";
@@ -701,13 +741,12 @@ function renderDetailedList() {
       <div class="sync-msg-list ${isOpen ? "open" : ""}" id="sync-msg-list-${ci}">
         ${filtered.length === 0
           ? `<div style="padding:10px 28px;font-size:11.5px;color:var(--text-3)">Aucun message ne correspond aux filtres.</div>`
-          : filtered.map((m, mi) => {
+          : filtered.map((m) => {
               const origIdx = cat.messages.indexOf(m);
               const dateStr = m.date ? new Date(m.date).toLocaleDateString("fr-FR") : "—";
               return `
-                <div class="sync-msg-item" onclick="toggleMsg(${ci},${origIdx})">
-                  <input type="checkbox" ${m.selected ? "checked" : ""}
-                    onclick="event.stopPropagation();toggleMsg(${ci},${origIdx})">
+                <div class="sync-msg-item" data-ci="${ci}" data-mi="${origIdx}">
+                  <input type="checkbox" ${m.selected ? "checked" : ""}>
                   <div class="sync-msg-body">
                     <div class="sync-msg-subject">${esc(m.subject || "(sans sujet)")}</div>
                     <div class="sync-msg-meta">
@@ -739,30 +778,67 @@ function renderDetailedList() {
       list.classList.toggle("open", _accOpen[ci]);
     });
   });
+
+  // Clic sur ligne message → toggle via data-attributes (pas de re-render)
+  syncCatList.querySelectorAll(".sync-msg-item").forEach(item => {
+    item.addEventListener("click", (e) => {
+      const ci = +item.dataset.ci;
+      const mi = +item.dataset.mi;
+      const cb = item.querySelector("input[type=checkbox]");
+      // Si clic direct sur checkbox, ne pas doubler
+      const newVal = e.target === cb ? cb.checked : !_syncCategories[ci].messages[mi].selected;
+      _syncCategories[ci].messages[mi].selected = newVal;
+      if (cb) cb.checked = newVal;
+      _updateCatHeader(ci);
+      updateSelCount();
+    });
+  });
 }
 
-// Fonctions de sélection exposées globalement
-window.toggleMsg = function(ci, mi) {
-  _syncCategories[ci].messages[mi].selected = !_syncCategories[ci].messages[mi].selected;
-  renderDetailedList();
-  updateSelCount();
-};
+function _updateCatHeader(ci) {
+  const cat = _syncCategories[ci];
+  if (!cat) return;
+  const filtered  = applyFilters(cat.messages);
+  const selCount  = filtered.filter(m => m.selected).length;
+  const hdr       = syncCatList.querySelector(`.sync-acc-header[data-ci="${ci}"]`);
+  if (!hdr) return;
+  const badge     = hdr.querySelector(".sync-acc-sel");
+  const masterCb  = hdr.querySelector(".cat-master-check");
+  if (badge)    badge.textContent = `${selCount} sélectionné(s)`;
+  if (masterCb) {
+    masterCb.checked      = selCount === filtered.length && filtered.length > 0;
+    masterCb.indeterminate = selCount > 0 && selCount < filtered.length;
+  }
+}
 
+// Fonctions de sélection exposées globalement — mises à jour en-place (pas de re-render)
 window.toggleCatAll = function(ci, checked) {
-  applyFilters(_syncCategories[ci].messages).forEach(m => m.selected = checked);
-  renderDetailedList();
+  applyFilters(_syncCategories[ci].messages).forEach(m => {
+    m.selected = checked;
+    const item = syncCatList.querySelector(`.sync-msg-item[data-ci="${ci}"][data-mi="${_syncCategories[ci].messages.indexOf(m)}"]`);
+    if (item) { const cb = item.querySelector("input"); if (cb) cb.checked = checked; }
+  });
+  _updateCatHeader(ci);
   updateSelCount();
 };
 
 window.setCatSel = function(ci, val) {
-  applyFilters(_syncCategories[ci].messages).forEach(m => m.selected = val);
-  renderDetailedList();
+  applyFilters(_syncCategories[ci].messages).forEach(m => {
+    m.selected = val;
+    const item = syncCatList.querySelector(`.sync-msg-item[data-ci="${ci}"][data-mi="${_syncCategories[ci].messages.indexOf(m)}"]`);
+    if (item) { const cb = item.querySelector("input"); if (cb) cb.checked = val; }
+  });
+  _updateCatHeader(ci);
   updateSelCount();
 };
 
 window.invertCatSel = function(ci) {
-  applyFilters(_syncCategories[ci].messages).forEach(m => m.selected = !m.selected);
-  renderDetailedList();
+  applyFilters(_syncCategories[ci].messages).forEach(m => {
+    m.selected = !m.selected;
+    const item = syncCatList.querySelector(`.sync-msg-item[data-ci="${ci}"][data-mi="${_syncCategories[ci].messages.indexOf(m)}"]`);
+    if (item) { const cb = item.querySelector("input"); if (cb) cb.checked = m.selected; }
+  });
+  _updateCatHeader(ci);
   updateSelCount();
 };
 
@@ -807,18 +883,33 @@ document.getElementById("sync-sort").addEventListener("change", e => {
   renderDetailedList(); updateSelCount();
 });
 
-// Sélection globale
+// Sélection globale — mise à jour en-place
 document.getElementById("sync-sel-all").addEventListener("click", () => {
-  _syncCategories.forEach(cat => applyFilters(cat.messages).forEach(m => m.selected = true));
-  renderDetailedList(); updateSelCount();
+  _syncCategories.forEach((cat, ci) => {
+    applyFilters(cat.messages).forEach(m => { m.selected = true; });
+    _updateCatHeader(ci);
+  });
+  syncCatList.querySelectorAll(".sync-msg-item input[type=checkbox]").forEach(cb => cb.checked = true);
+  updateSelCount();
 });
 document.getElementById("sync-sel-none").addEventListener("click", () => {
-  _syncCategories.forEach(cat => applyFilters(cat.messages).forEach(m => m.selected = false));
-  renderDetailedList(); updateSelCount();
+  _syncCategories.forEach((cat, ci) => {
+    applyFilters(cat.messages).forEach(m => { m.selected = false; });
+    _updateCatHeader(ci);
+  });
+  syncCatList.querySelectorAll(".sync-msg-item input[type=checkbox]").forEach(cb => cb.checked = false);
+  updateSelCount();
 });
 document.getElementById("sync-sel-invert").addEventListener("click", () => {
-  _syncCategories.forEach(cat => applyFilters(cat.messages).forEach(m => m.selected = !m.selected));
-  renderDetailedList(); updateSelCount();
+  _syncCategories.forEach((cat, ci) => {
+    applyFilters(cat.messages).forEach(m => {
+      m.selected = !m.selected;
+      const item = syncCatList.querySelector(`.sync-msg-item[data-ci="${ci}"][data-mi="${cat.messages.indexOf(m)}"]`);
+      if (item) { const cb = item.querySelector("input"); if (cb) cb.checked = m.selected; }
+    });
+    _updateCatHeader(ci);
+  });
+  updateSelCount();
 });
 
 if (syncCheckAll) {
