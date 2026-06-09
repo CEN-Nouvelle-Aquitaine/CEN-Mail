@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.7.2");
+console.log("[Mail-Migrator CEN] Chargé v1.7.3");
 
 const STATE_KEY = "mig_state";
 
@@ -25,11 +25,11 @@ const STATE_KEY = "mig_state";
 // M365 limite à ~3 600 msgs/heure = 1 msg/sec maximum
 // copyTimeout : délai max avant d'abandonner une copie bloquée (ms)
 const SPEED_PROFILES = {
-  rapide  : { batchSize: 5, batchDelay: 3000, msgDelay:  500, copyTimeout:  45000 }, // ~3 200/h
-  normal  : { batchSize: 3, batchDelay: 3000, msgDelay:  500, copyTimeout:  60000 }, // ~2 400/h
-  prudent : { batchSize: 2, batchDelay: 4000, msgDelay:  800, copyTimeout:  90000 }, // ~1 300/h
-  lent    : { batchSize: 1, batchDelay: 6000, msgDelay: 1000, copyTimeout: 120000 }, // ~500/h
-  ultra   : { batchSize: 1, batchDelay:10000, msgDelay: 2000, copyTimeout: 180000 }, // ~300/h
+  rapide  : { batchSize: 5, batchDelay: 3000, msgDelay:  500, copyTimeout:  60000 }, // ~3 200/h
+  normal  : { batchSize: 3, batchDelay: 3000, msgDelay:  500, copyTimeout:  90000 }, // ~2 400/h
+  prudent : { batchSize: 2, batchDelay: 4000, msgDelay:  800, copyTimeout: 120000 }, // ~1 300/h
+  lent    : { batchSize: 1, batchDelay: 6000, msgDelay: 1000, copyTimeout: 180000 }, // ~500/h
+  ultra   : { batchSize: 1, batchDelay:10000, msgDelay: 2000, copyTimeout: 240000 }, // ~300/h
 };
 
 // Profil actif (modifié au démarrage de chaque copie)
@@ -323,6 +323,20 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
           if (!copied && !state.cancel) {
             progress.errors.push({ subject: m.subject || "(sans objet)", reason: "Throttling M365 persistant (3 tentatives épuisées)" });
             log("error", `✗ Throttling persistant après 3 tentatives : ${subj}`);
+          }
+        } else if (errMsg.includes("délai dépassé")) {
+          // Message volumineux : timeout → 1 seul ré-essai après 30 s
+          log("warn", `⏳ Timeout sur "${subj}", ré-essai dans 30 s…`);
+          await sleep(30000);
+          if (!state.cancel) {
+            try {
+              await withTimeout(messenger.messages.copy([m.id], dstId, { isUserAction: true }), CFG.COPY_TIMEOUT);
+              progress.done++;
+              log("ok", `✓ [${progress.done}/${progress.total}] ${subj} (après timeout)`);
+            } catch(e2) {
+              progress.errors.push({ subject: m.subject || "(sans objet)", reason: e2.message });
+              log("error", `✗ Erreur : ${subj} — ${e2.message}`);
+            }
           }
         } else {
           progress.errors.push({ subject: m.subject || "(sans objet)", reason: e.message });
