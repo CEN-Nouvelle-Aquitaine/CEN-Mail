@@ -1225,19 +1225,22 @@ async function graphAuthenticate() {
 async function findGraphMessageId(internetMessageId) {
   if (!isTokenValid()) throw new Error("Token Graph expiré — reconnectez-vous.");
 
-  // Nettoyer le Message-ID (retirer les <>)
-  const cleanId = internetMessageId.replace(/^<|>$/g, "");
-
+  // Normaliser le Message-ID : s'assurer qu'il est entouré de <>
+  const raw     = internetMessageId.trim();
+  const withBrackets = raw.startsWith("<") ? raw : `<${raw}>`;
+  // Chercher d'abord dans /me/messages (inclut toutes les boîtes sauf Junk)
+  const params  = new URLSearchParams({
+    "$filter"  : `internetMessageId eq '${withBrackets}'`,
+    "$select"  : "id,subject,internetMessageId,categories",
+    "$top"     : "1",
+  });
   const resp = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages` +
-    `?$filter=internetMessageId eq '${encodeURIComponent("<" + cleanId + ">")}'` +
-    `&$select=id,subject,internetMessageId,categories` +
-    `&$top=1`,
+    `https://graph.microsoft.com/v1.0/me/messages?${params}`,
     { headers: { "Authorization": `Bearer ${_graphToken}` } }
   );
 
   if (!resp.ok) {
-    const err = await resp.json();
+    const err = await resp.json().catch(() => ({}));
     throw new Error("Graph query failed: " + (err.error?.message ?? resp.status));
   }
 

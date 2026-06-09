@@ -135,11 +135,12 @@ messenger.runtime.onMessage.addListener(msg => {
     }
     case "GRAPH_APPLY_DONE": {
       showSyncStep(3);
-      const skip = msg.skipped ? ` · ${msg.skipped} non trouves` : "";
+      const skip = msg.skipped ? ` · ${msg.skipped} non trouvés dans Graph` : "";
       const errs = msg.errors?.length ? ` · ${msg.errors.length} erreur(s)` : "";
+      const allOk = !msg.errors?.length && !msg.skipped;
       setStatus(syncStatus,
-        `✅ ${msg.done}/${msg.total} categories appliquees dans Outlook${skip}${errs}`,
-        msg.errors?.length ? "warning" : "success");
+        `✅ ${msg.done}/${msg.total} catégories appliquées dans Outlook${skip}${errs}`,
+        allOk ? "success" : "warning");
       break;
     }
     case "GRAPH_ERROR":
@@ -513,7 +514,8 @@ const syncCatList  = document.getElementById("sync-cat-list");
 const syncCheckAll = document.getElementById("sync-check-all");
 const syncUnmapped = document.getElementById("sync-unmapped");
 const syncUnmappedMsg = document.getElementById("sync-unmapped-msg");
-const syncApply    = document.getElementById("sync-apply");
+const syncApplySmart    = document.getElementById("sync-apply-smart");
+const syncApplyModeLabel = document.getElementById("sync-apply-mode-label");
 const syncApplyBar = document.getElementById("sync-apply-bar");
 const syncApplyCount = document.getElementById("sync-apply-count");
 const syncApplyPct = document.getElementById("sync-apply-pct");
@@ -664,23 +666,45 @@ function renderSyncResults(r) {
 
   if (!r.categories.length) {
     syncCatList.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-3)">Aucune catégorie à appliquer — tout est déjà à jour.</div>';
-    syncApply.style.display = "none";
-    document.getElementById("sync-apply-graph").style.display = "none";
+    syncApplySmart.style.display = "none";
+    syncApplyModeLabel.style.display = "none";
     return;
   }
 
   // Stocker les données enrichies pour le filtrage/tri
   _syncCategories = r.categories.map(cat => ({
     ...cat,
-    // Enrichir chaque message avec un flag de sélection
     messages: cat.messages.map(m => ({ ...m, selected: true }))
   }));
 
   renderDetailedList();
   updateSelCount();
 
-  syncApply.style.display = "";
-  document.getElementById("sync-apply-graph").style.display = "";
+  syncApplySmart.style.display = "";
+  syncApplyModeLabel.style.display = "";
+  _updateApplyMode();
+}
+
+async function _updateApplyMode() {
+  try {
+    const auth = await send({ action: "graphIsAuthenticated" });
+    if (auth.authenticated) {
+      syncApplySmart.className = "btn btn-orange";
+      syncApplySmart.innerHTML = "🔗 Appliquer";
+      syncApplyModeLabel.textContent = "via Graph (Outlook Online)";
+      syncApplySmart.dataset.mode = "graph";
+    } else {
+      syncApplySmart.className = "btn btn-primary";
+      syncApplySmart.innerHTML = "✓ Appliquer";
+      syncApplyModeLabel.textContent = "via IMAP (Thunderbird)";
+      syncApplySmart.dataset.mode = "imap";
+    }
+  } catch {
+    syncApplySmart.className = "btn btn-primary";
+    syncApplySmart.innerHTML = "✓ Appliquer";
+    syncApplyModeLabel.textContent = "via IMAP";
+    syncApplySmart.dataset.mode = "imap";
+  }
 }
 
 // État des filtres
@@ -920,34 +944,55 @@ if (syncCheckAll) {
   });
 }
 
-syncApply.addEventListener("click", async () => {
+// Bouton unique intelligent — Graph si connecté, IMAP sinon
+syncApplySmart.addEventListener("click", async () => {
   const selected = getSelectedForApply();
   if (!selected.length) {
     setStatus(syncStatus, "⚠️ Sélectionnez au moins un message.", "warning");
     return;
   }
   const total = selected.reduce((s,c) => s + c.messages.length, 0);
+  const mode  = syncApplySmart.dataset.mode || "imap";
 
-  const ok = await confirm({
-    icon : "✓",
-    title: "Appliquer les étiquettes via IMAP",
-    html : `
-      <div class="highlight">
-        <strong>${total} message(s)</strong> vont recevoir leur étiquette via IMAP.
-      </div>
-      <ul>
-        ${selected.map(c => `<li><strong>${c.messages.length} msg</strong> → <em>${esc(c.olCategory)}</em></li>`).join("")}
-      </ul>
-      <p style="margin-top:10px;font-size:11.5px;color:var(--text-3)">
-        Note : visible dans Thunderbird, mais peut ne pas apparaître dans Outlook Online.
-        Utilisez "Appliquer via Graph" pour Outlook Online.
-      </p>`,
-    confirmLabel: `✓ Appliquer IMAP (${total})`,
-  });
-  if (!ok) return;
-
-  showSyncStep(4);
-  await send({ action:"applyCategories", categories: selected });
+  if (mode === "graph") {
+    const ok = await confirm({
+      icon : "🔗",
+      title: "Appliquer les catégories via Microsoft Graph",
+      html : `
+        <div class="highlight">
+          <strong>${total} message(s)</strong> vont recevoir leur catégorie
+          directement dans Outlook via l'API Microsoft Graph.
+        </div>
+        <ul>${selected.map(c => `<li><strong>${c.messages.length} msg</strong> → <em>${esc(c.olCategory)}</em></li>`).join("")}</ul>
+        <p style="margin-top:10px;font-size:11.5px;color:var(--text-3)">
+          Les catégories seront visibles immédiatement dans Outlook Online.
+        </p>`,
+      confirmLabel: `🔗 Appliquer via Graph (${total})`,
+      confirmClass: "btn-orange",
+    });
+    if (!ok) return;
+    showSyncStep(4);
+    syncApplyBar.style.width = "0%";
+    syncApplyCount.textContent = "Application via Graph en cours…";
+    await send({ action:"applyCategoriesViaGraph", categories: selected });
+  } else {
+    const ok = await confirm({
+      icon : "✓",
+      title: "Appliquer les étiquettes via IMAP",
+      html : `
+        <div class="highlight">
+          <strong>${total} message(s)</strong> vont recevoir leur étiquette via IMAP.
+        </div>
+        <ul>${selected.map(c => `<li><strong>${c.messages.length} msg</strong> → <em>${esc(c.olCategory)}</em></li>`).join("")}</ul>
+        <p style="margin-top:10px;font-size:11.5px;color:var(--text-3)">
+          Visible dans Thunderbird. Connectez-vous à Graph pour appliquer dans Outlook Online.
+        </p>`,
+      confirmLabel: `✓ Appliquer IMAP (${total})`,
+    });
+    if (!ok) return;
+    showSyncStep(4);
+    await send({ action:"applyCategories", categories: selected });
+  }
 });
 
 // Recommencer
@@ -1193,17 +1238,19 @@ function updateGraphAuthStatus(authenticated) {
     graphAuthIcon.textContent  = "🔓";
     graphAuthLabel.textContent = "Connecté à Microsoft 365";
     graphAuthLabel.style.color = "var(--success)";
-    graphAuthSub.textContent   = "Token actif — vous pouvez utiliser 'Appliquer via Graph' dans l'onglet Synchro.";
+    graphAuthSub.textContent   = "Token actif — les catégories seront appliquées via Graph (Outlook Online).";
     graphAuth.style.display       = "none";
     graphDisconnect.style.display = "block";
   } else {
     graphAuthIcon.textContent  = "🔒";
     graphAuthLabel.textContent = "Non connecté";
     graphAuthLabel.style.color = "var(--text)";
-    graphAuthSub.textContent   = "Cliquez 'Se connecter' pour vous authentifier avec votre compte Microsoft CEN.";
+    graphAuthSub.textContent   = "Cliquez 'Se connecter' pour vous authentifier. Sans connexion, les catégories s'appliquent via IMAP.";
     graphAuth.style.display       = "block";
     graphDisconnect.style.display = "none";
   }
+  // Mettre à jour le bouton Appliquer si l'onglet synchro est actif
+  if (syncApplySmart.style.display !== "none") _updateApplyMode();
 }
 
 document.querySelector("[data-tab='graph']").addEventListener("click", loadGraphState);
@@ -1227,70 +1274,7 @@ graphDisconnect.addEventListener("click", () => {
   hideStatus(graphStatus);
 });
 
-// ── Bouton "Appliquer via Graph" dans la synchro ──────────────
-document.getElementById("sync-apply-graph").addEventListener("click", async () => {
-  // Vérifier authentification Graph
-  const authState = await send({ action:"graphIsAuthenticated" });
-  if (!authState.authenticated) {
-    const ok = await confirm({
-      icon : "🔗",
-      title: "Authentification Graph requise",
-      html : `
-        <div class="highlight">
-          Pour appliquer les catégories via Microsoft Graph, vous devez
-          d'abord vous authentifier dans l'onglet <strong>🔗 Graph</strong>.
-        </div>
-        <p style="font-size:11.5px;color:var(--text-3);margin-top:8px">
-          Allez dans l'onglet Graph, saisissez votre secret et authentifiez-vous.
-        </p>`,
-      confirmLabel: "Aller dans l'onglet Graph",
-    });
-    if (ok) {
-      tabs.forEach(t => t.classList.remove("active"));
-      panels.forEach(p => p.classList.remove("active"));
-      document.querySelector("[data-tab='graph']").classList.add("active");
-      document.getElementById("panel-graph").classList.add("active");
-      loadGraphState();
-    }
-    return;
-  }
-
-  const selected = getSelectedForApply();
-
-  if (!selected.length) {
-    setStatus(syncStatus, "⚠️ Sélectionnez au moins un message.", "warning");
-    return;
-  }
-
-  const total = selected.reduce((s,c) => s + c.messages.length, 0);
-
-  const ok = await confirm({
-    icon : "🔗",
-    title: "Appliquer les catégories via Microsoft Graph",
-    html : `
-      <div class="highlight">
-        <strong>${total} message(s)</strong> vont recevoir leur catégorie
-        directement dans Outlook via l'API Microsoft Graph.
-      </div>
-      <ul>
-        ${selected.map(c => `
-          <li><strong>${c.messages.length} msg</strong> → <em>${esc(c.olCategory)}</em></li>
-        `).join("")}
-      </ul>
-      <p style="margin-top:10px;font-size:11.5px;color:var(--text-3)">
-        Les catégories seront visibles immédiatement dans Outlook Online.
-      </p>`,
-    confirmLabel: `🔗 Appliquer via Graph (${total} messages)`,
-    confirmClass: "btn-orange",
-  });
-  if (!ok) return;
-
-  showSyncStep(4);
-  syncApplyBar.style.width = "0%";
-  syncApplyCount.textContent = "Application via Graph en cours…";
-
-  await send({ action:"applyCategoriesViaGraph", categories: selected });
-});
+// (Le bouton "Appliquer via Graph" est remplacé par sync-apply-smart ci-dessus)
 
 // (Graph broadcasts handled in unified listener above)
 function onSyncDone(msg) {
