@@ -1002,6 +1002,13 @@ syncReset.addEventListener("click", () => {
   showSyncStep(1);
 });
 
+// Annuler l'application en cours (step 4)
+document.getElementById("sync-apply-cancel").addEventListener("click", async () => {
+  await send({ action:"cancelMigration" });
+  showSyncStep(3);
+  setStatus(syncStatus, "⚠️ Annulation demandée — résultat partiel ci-dessus.", "warning");
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ONGLET 5 : EXPORT
 // ═══════════════════════════════════════════════════════════════

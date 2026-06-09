@@ -1222,19 +1222,24 @@ async function graphAuthenticate() {
  * Recherche un message dans Graph par son Internet Message-ID (RFC 2822).
  * Retourne l'ID Graph interne du message.
  */
+function graphFetch(url, opts = {}, timeoutMs = 15000) {
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .finally(() => clearTimeout(tid));
+}
+
 async function findGraphMessageId(internetMessageId) {
   if (!isTokenValid()) throw new Error("Token Graph expiré — reconnectez-vous.");
 
-  // Normaliser le Message-ID : s'assurer qu'il est entouré de <>
-  const raw     = internetMessageId.trim();
+  const raw        = internetMessageId.trim();
   const withBrackets = raw.startsWith("<") ? raw : `<${raw}>`;
-  // Chercher d'abord dans /me/messages (inclut toutes les boîtes sauf Junk)
-  const params  = new URLSearchParams({
-    "$filter"  : `internetMessageId eq '${withBrackets}'`,
-    "$select"  : "id,subject,internetMessageId,categories",
-    "$top"     : "1",
+  const params     = new URLSearchParams({
+    "$filter" : `internetMessageId eq '${withBrackets}'`,
+    "$select" : "id,subject,internetMessageId,categories",
+    "$top"    : "1",
   });
-  const resp = await fetch(
+  const resp = await graphFetch(
     `https://graph.microsoft.com/v1.0/me/messages?${params}`,
     { headers: { "Authorization": `Bearer ${_graphToken}` } }
   );
@@ -1256,7 +1261,7 @@ async function findGraphMessageId(internetMessageId) {
 async function applyGraphCategories(graphMsgId, categories) {
   if (!isTokenValid()) throw new Error("Token Graph expiré — reconnectez-vous.");
 
-  const resp = await fetch(
+  const resp = await graphFetch(
     `https://graph.microsoft.com/v1.0/me/messages/${graphMsgId}`,
     {
       method : "PATCH",
@@ -1269,7 +1274,7 @@ async function applyGraphCategories(graphMsgId, categories) {
   );
 
   if (!resp.ok) {
-    const err = await resp.json();
+    const err = await resp.json().catch(() => ({}));
     throw new Error("Graph PATCH failed: " + (err.error?.message ?? resp.status));
   }
   return true;
@@ -1370,7 +1375,7 @@ function closestPreset(hex) {
 
 async function listOutlookCategories() {
   if (!isTokenValid()) throw new Error("Token Graph expire — reconnectez-vous.");
-  const resp = await fetch(
+  const resp = await graphFetch(
     "https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
     { headers: { "Authorization": `Bearer ${_graphToken}` } }
   );
@@ -1384,7 +1389,7 @@ async function listOutlookCategories() {
 
 async function createOutlookCategory(displayName, color) {
   if (!isTokenValid()) throw new Error("Token Graph expire — reconnectez-vous.");
-  const resp = await fetch(
+  const resp = await graphFetch(
     "https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
     {
       method: "POST",
@@ -1459,9 +1464,10 @@ async function probeM365Domain(email) {
 
   let isMicrosoft = false;
   try {
-    const resp = await fetch(
+    const resp = await graphFetch(
       `https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=MX`,
-      { headers: { "Accept":"application/json" } }
+      { headers: { "Accept":"application/json" } },
+      8000
     );
     if (resp.ok) {
       const dns = await resp.json();
