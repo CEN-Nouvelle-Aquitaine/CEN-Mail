@@ -357,15 +357,19 @@
     .modal {
       background: var(--surface); border-radius: 10px;
       padding: 20px; width: 440px; max-width: 95%;
+      max-height: 85vh;
       box-shadow: 0 8px 32px rgba(0,0,0,.25);
+      display: flex; flex-direction: column;
     }
     .modal-title {
       font-size: 14px; font-weight: 700; color: var(--text);
       margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
     }
     .modal-body {
       font-size: 12.5px; color: var(--text-2); line-height: 1.6;
       margin-bottom: 16px;
+      overflow-y: auto; flex: 1 1 auto;
     }
     .modal-body ul { padding-left: 18px; margin-top: 6px; }
     .modal-body li { margin-bottom: 3px; }
