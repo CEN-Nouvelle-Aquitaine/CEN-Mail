@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Mail-CAT CEN",
+  "version": "1.0.0",
+  "description": "Étiquettes TB ↔ catégories Outlook — mapping, synchronisation et migration via Graph",
+  "author": "DSI CEN Nouvelle-Aquitaine",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mail-cat-cen@cen-na.org",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "storage", "identity", "alarms",
+    "messagesRead", "messagesUpdate",
+    "messagesTags", "messagesTagsList",
+    "accountsRead", "accountsFolders",
+    "notifications", "tabs"
+  ],
+  "host_permissions": [
+    "https://login.microsoftonline.com/*",
+    "https://graph.microsoft.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_title": "Mail-CAT CEN",
+    "default_popup": "popup/popup.html"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "64": "icons/icon-64.png"
+  }
+}
