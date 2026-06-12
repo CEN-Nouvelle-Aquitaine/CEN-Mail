@@ -12,7 +12,7 @@
  */
 "use strict";
 
-console.log("[Mail-Migrator CEN] Chargé v1.7.3");
+console.log("[Mail-Migrator CEN] Chargé v1.7.4");
 
 const STATE_KEY = "mig_state";
 
@@ -113,8 +113,8 @@ function broadcast(msg) {
 
 function isPermErr(e) {
   const m = (e?.message || "").toLowerCase();
-  // "délai dépassé" = timeout — ne pas réessayer, l'opération est déjà abandonnée
-  return ["permission denied", "quota", "no such folder", "already contains", "délai dépassé"].some(p => m.includes(p));
+  // "délai dépassé"/"aborted" = timeout ou abort serveur — ne pas laisser withRetry réessayer en boucle
+  return ["permission denied", "quota", "no such folder", "already contains", "délai dépassé", "aborted"].some(p => m.includes(p));
 }
 
 function isM365ThrottleErr(e) {
@@ -336,6 +336,21 @@ async function copyFolderRecursive(srcFolder, dstFolder, progress, dateFilter, f
             } catch(e2) {
               progress.errors.push({ subject: m.subject || "(sans objet)", reason: e2.message });
               log("error", `✗ Erreur : ${subj} — ${e2.message}`);
+            }
+          }
+        } else if (errMsg.includes("aborted")) {
+          // M365 a coupé la connexion IMAP (message trop lourd ou throttle dur)
+          // → 1 ré-essai après 45 s ; si ça échoue encore, l'erreur va dans le rapport
+          log("warn", `⚡ Connexion interrompue par le serveur sur "${subj}", ré-essai dans 45 s…`);
+          await sleep(45000);
+          if (!state.cancel) {
+            try {
+              await withTimeout(messenger.messages.copy([m.id], dstId, { isUserAction: true }), CFG.COPY_TIMEOUT);
+              progress.done++;
+              log("ok", `✓ [${progress.done}/${progress.total}] ${subj} (après abort)`);
+            } catch(e2) {
+              progress.errors.push({ subject: m.subject || "(sans objet)", reason: e2.message });
+              log("error", `✗ Erreur (msg trop lourd ou rejet serveur) : ${subj} — ${e2.message}`);
             }
           }
         } else {
